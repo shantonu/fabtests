@@ -61,43 +61,16 @@
 #include <rdma/fi_atomic.h>
 #include <shared.h>
 
-struct test_size_param {
-	int size;
-	int option;
-};
+#define READ 0
+#define WRITE 1
 
-static struct test_size_param test_size[] = {
-	{ 1 <<  0, 1 },
-	{ 1 <<  1, 1 },
-	{ 1 <<  2, 1 },
-	{ 1 <<  3, 1 },
-	{ 1 <<  4, 1 },
-	{ 1 <<  5, 1 },
-	{ 1 <<  6, 0 },
-	{ 1 <<  7, 1 }, { (1 <<  7) + (1 <<  6), 1},
-	{ 1 <<  8, 1 }, { (1 <<  8) + (1 <<  7), 1},
-	{ 1 <<  9, 1 }, { (1 <<  9) + (1 <<  8), 1},
-	{ 1 << 10, 1 }, { (1 << 10) + (1 <<  9), 1},
-	{ 1 << 11, 1 }, { (1 << 11) + (1 << 10), 1},
-	{ 1 << 12, 0 }, { (1 << 12) + (1 << 11), 1},
-	{ 1 << 13, 1 }, { (1 << 13) + (1 << 12), 1},
-	{ 1 << 14, 1 }, { (1 << 14) + (1 << 13), 1},
-	{ 1 << 15, 1 }, { (1 << 15) + (1 << 14), 1},
-	{ 1 << 16, 0 }, { (1 << 16) + (1 << 15), 1},
-	{ 1 << 17, 1 }, { (1 << 17) + (1 << 16), 1},
-	{ 1 << 18, 1 }, { (1 << 18) + (1 << 17), 1},
-	{ 1 << 19, 1 }, { (1 << 19) + (1 << 18), 1},
-	{ 1 << 20, 0 }, { (1 << 20) + (1 << 19), 1},
-	{ 1 << 21, 1 }, { (1 << 21) + (1 << 20), 1},
-	{ 1 << 22, 1 }, { (1 << 22) + (1 << 21), 1},
-};
-#define TEST_CNT (sizeof test_size / sizeof test_size[0])
-
+static int op_type;
 static int custom;
 static int size_option;
 static int iterations = 1000;
 static int transfer_size = 1000;
 static int max_credits = 128;
+static int warmup_iters = 128;
 static char test_name[10] = "custom";
 static struct timeval start, end;
 static void *buf;
@@ -119,38 +92,18 @@ static struct fid_eq *cmeq;
 static struct fid_cq *rcq, *scq;
 static struct fid_mr *mr;
 
-static void show_perf(void)
+void usage(char *name)
 {
-	char str[32];
-	float usec;
-	long long bytes;
-
-	usec = (end.tv_sec - start.tv_sec) * 1000000 + (end.tv_usec - start.tv_usec);
-	bytes = (long long) iterations * transfer_size * 2;
-
-	/* name size transfers iterations bytes seconds Gb/sec usec/xfer */
-	fprintf(stderr, "%-10s", test_name);
-	size_str(str, sizeof str, transfer_size);
-	fprintf(stderr, "%-8s", str);
-	cnt_str(str, sizeof str, 1);
-	fprintf(stderr, "%-8s", str);
-	cnt_str(str, sizeof str, iterations);
-	fprintf(stderr, "%-8s", str);
-	size_str(str, sizeof str, bytes);
-	fprintf(stderr, "%-8s", str);
-	fprintf(stderr, "%8.2fs%10.2f%11.2f\n",
-		usec / 1000000., (bytes * 8) / (1000. * usec),
-		(usec / iterations) );
-}
-
-static void init_test(int size)
-{
-	char sstr[5];
-
-	size_str(sstr, sizeof sstr, size);
-	snprintf(test_name, sizeof test_name, "%s_lat", sstr);
-	transfer_size = size;
-	iterations = size_to_count(transfer_size);
+	fprintf(stderr, "usage: %s\n", name);
+	fprintf(stderr, "\t[-d destination_address]\n");
+	fprintf(stderr, "\t[-n domain_name]\n");
+	fprintf(stderr, "\t[-p port_number]\n");
+	fprintf(stderr, "\t[-s source_address]\n");
+	fprintf(stderr, "\t[-I iterations]\n");
+	fprintf(stderr, "\t[-o read|write] (default: write)\n");
+	fprintf(stderr, "\t[-w warmup iterations]\n");
+	fprintf(stderr, "\t[-S transfer_size or 'all']\n");
+	exit(1);
 }
 
 static int wait_for_completion(struct fid_cq *cq, int num_completions)
@@ -163,18 +116,18 @@ static int wait_for_completion(struct fid_cq *cq, int num_completions)
 		if (ret > 0) {
 			num_completions--;
 		} else if (ret < 0) {
-			fprintf(stderr, "Event queue read %d (%s)\n", ret, fi_strerror(-ret));
+			printf("Event queue read %d (%s)\n", ret, fi_strerror(-ret));
 			return ret;
 		}
 	}
 	return 0;
 }
 
-static int send_msg(void *buffer, size_t len, void *desc)
+static int send_msg(int size)
 {
 	int ret;
 
-	ret = fi_send(ep, buffer, len, desc, NULL);
+	ret = fi_send(ep, buf, (size_t) size, fi_mr_desc(mr), NULL);
 	if (ret){
 		fprintf(stderr, "fi_send %d (%s)\n", ret, fi_strerror(-ret));
 		return ret;
@@ -183,17 +136,31 @@ static int send_msg(void *buffer, size_t len, void *desc)
 	return wait_for_completion(scq, 1);
 }
 
-static int post_recv(void *buffer, size_t len, void *desc)
+static int post_recv()
 {
 	int ret;
 
-	ret = fi_recv(ep, buffer, len, desc, NULL);
+	ret = fi_recv(ep, buf, buffer_size, fi_mr_desc(mr), NULL);
 	if (ret){
 		fprintf(stderr, "fi_recv %d (%s)\n", ret, fi_strerror(-ret));
 		return ret;
 	}
 
 	return ret;
+}
+
+static int read_data(size_t size)
+{
+	int ret;
+
+	ret = fi_read(ep,  buf, size, fi_mr_desc(mr), 
+		       (uint64_t)rem_buf, rem_key, NULL);
+	if (ret){
+		fprintf(stderr, "fi_read %d (%s)\n", ret, fi_strerror(-ret));
+		return ret;
+	}
+
+	return 0;
 }
 
 static int write_data(size_t size)
@@ -209,13 +176,33 @@ static int write_data(size_t size)
 	return 0;
 }
 
+static int warmup(int iters)
+{
+	int ret, i;
+	for(i = 0; i<iters; i++){
+		if((ret = read_data(16)) < 0)
+			return ret;
+		if((ret = wait_for_completion(scq, 1)) < 0)
+			return ret;
+	}
+	return 0;
+}
+
 static int run_test(void)
 {
 	int ret, i;
 
+	ret = warmup(warmup_iters);
+	if (ret)
+		goto out;
+
 	gettimeofday(&start, NULL);
 	for (i = 0; i < iterations; i++) {
-		ret = write_data(transfer_size);
+		if (op_type) {
+			ret = read_data(transfer_size);
+		} else {
+			ret = write_data(transfer_size);
+		}
 		if (ret)
 			goto out;
 		ret = wait_for_completion(scq, 1);
@@ -223,7 +210,7 @@ static int run_test(void)
 			goto out;
 	}
 	gettimeofday(&end, NULL);
-	show_perf();
+	show_perf(start, end, transfer_size, iterations, test_name);
 	ret = 0;
 
 out:
@@ -263,7 +250,7 @@ static int alloc_ep_res(struct fi_info *fi)
 	int ret;
 
 	buffer_size = !custom ? test_size[TEST_CNT - 1].size : transfer_size;
-	buf = malloc(MAX(buffer_size, sizeof(uintptr_t) + sizeof(uint64_t)));
+	buf = malloc(MAX(buffer_size, sizeof(uint64_t)));
 	if (!buf) {
 		perror("malloc");
 		return -1;
@@ -285,8 +272,8 @@ static int alloc_ep_res(struct fi_info *fi)
 		goto err2;
 	}
 	
-	ret = fi_mr_reg(dom, buf, MAX(buffer_size, sizeof(uint64_t) + sizeof(uintptr_t)),
-			FI_REMOTE_WRITE, 0, 0, 0, &mr, NULL);
+	ret = fi_mr_reg(dom, buf, MAX(buffer_size, sizeof(uint64_t)), 
+			FI_REMOTE_READ | FI_REMOTE_WRITE, 0, 0, 0, &mr, NULL);
 	if (ret) {
 		fprintf(stderr, "fi_mr_reg %s\n", fi_strerror(-ret));
 		goto err3;
@@ -329,7 +316,7 @@ static int bind_ep_res(void)
 	if (ret)
 		return ret;
 
-	ret = bind_fid(&ep->fid, &scq->fid, FI_SEND|FI_WRITE);
+	ret = bind_fid(&ep->fid, &scq->fid, FI_SEND | FI_READ | FI_WRITE);
 	if (ret)
 		return ret;
 
@@ -398,38 +385,35 @@ err0:
 static int server_connect(void)
 {
 	struct fi_eq_cm_entry entry;
-	enum fi_eq_event event;
-	struct fi_info *info = NULL;
 	ssize_t rd;
 	int ret;
 
-	rd = fi_eq_sread(cmeq, &event, &entry, sizeof entry, -1, 0);
+	rd = fi_eq_condread(cmeq, &entry, sizeof entry, NULL, -1, 0);
 	if (rd != sizeof entry) {
-		fprintf(stderr, "fi_eq_sread %zd %s\n", rd, fi_strerror((int) -rd));
+		fprintf(stderr, "fi_eq_cond_read %zd %s\n", rd, fi_strerror((int) -rd));
 		return (int) rd;
 	}
 
-	if (event != FI_CONNREQ) {
-		fprintf(stderr, "Unexpected CM event %d\n", event);
+	if (entry.event != FI_CONNREQ) {
+		fprintf(stderr, "Unexpected CM event %d\n", entry.event);
 		ret = -FI_EOTHER;
 		goto err1;
 	}
 
-	info = entry.info;
-	ret = fi_domain(fab, info, &dom, NULL);
+	ret = fi_fdomain(fab, entry.info->domain_attr, &dom, NULL);
 	if (ret) {
 		fprintf(stderr, "fi_fdomain %s\n", fi_strerror(-ret));
 		goto err1;
 	}
 
 
-	ret = fi_endpoint(dom, info, &ep, NULL);
+	ret = fi_endpoint(dom, entry.info, &ep, NULL);
 	if (ret) {
 		fprintf(stderr, "fi_endpoint for req %s\n", fi_strerror(-ret));
 		goto err1;
 	}
 
-	ret = alloc_ep_res(info);
+	ret = alloc_ep_res(entry.info);
 	if (ret)
 		 goto err2;
 
@@ -437,26 +421,26 @@ static int server_connect(void)
 	if (ret)
 		goto err3;
 
-	ret = fi_accept(ep, NULL, 0);
+	ret = fi_accept(ep, entry.connreq, NULL, 0);
 	if (ret) {
 		fprintf(stderr, "fi_accept %s\n", fi_strerror(-ret));
 		goto err3;
 	}
 
-	rd = fi_eq_sread(cmeq, &event, &entry, sizeof entry, -1, 0);
+	rd = fi_eq_condread(cmeq, &entry, sizeof entry, NULL, -1, 0);
  	if (rd != sizeof entry) {
 		fprintf(stderr, "fi_eq_sread %zd %s\n", rd, fi_strerror((int) -rd));
 		goto err3;
  	}
 
-	if (event != FI_COMPLETE || entry.fid != &ep->fid) {
+	if (entry.event != FI_COMPLETE || entry.fid != &ep->fid) {
  		fprintf(stderr, "Unexpected CM event %d fid %p (ep %p)\n",
-			event, entry.fid, ep);
+			entry.event, entry.fid, ep);
  		ret = -FI_EOTHER;
  		goto err3;
  	}
  
- 	fi_freeinfo(info);
+ 	fi_freeinfo(entry.info);
  	return 0;
 
 err3:
@@ -465,15 +449,14 @@ err2:
 	fi_close(&ep->fid);
 err1:
 
- 	fi_reject(pep, info->connreq, NULL, 0);
- 	fi_freeinfo(info);
+ 	fi_reject(pep, entry.connreq, NULL, 0);
+ 	fi_freeinfo(entry.info);
  	return ret;
 }
 
 static int client_connect(void)
 {
 	struct fi_eq_cm_entry entry;
-	enum fi_eq_event event;
 	struct fi_info *fi;
 	ssize_t rd;
 	int ret;
@@ -497,7 +480,7 @@ static int client_connect(void)
 		goto err1;
 	}
 
- 	ret = fi_domain(fab, fi, &dom, NULL);
+ 	ret = fi_fdomain(fab, fi->domain_attr, &dom, NULL);
 	if (ret) {
 		fprintf(stderr, "fi_fdomain %s %s\n", fi_strerror(-ret),
 			fi->domain_attr->name);
@@ -524,15 +507,15 @@ static int client_connect(void)
 		goto err5;
 	}
 
- 	rd = fi_eq_sread(cmeq, &event, &entry, sizeof entry, -1, 0);
+ 	rd = fi_eq_condread(cmeq, &entry, sizeof entry, NULL, -1, 0);
 	if (rd != sizeof entry) {
 		fprintf(stderr, "fi_eq_condread %zd %s\n", rd, fi_strerror((int) -rd));
 		return (int) rd;
 	}
 
- 	if (event != FI_COMPLETE || entry.fid != &ep->fid) {
+ 	if (entry.event != FI_COMPLETE || entry.fid != &ep->fid) {
  		fprintf(stderr, "Unexpected CM event %d fid %p (ep %p)\n",
- 			event, entry.fid, ep);
+ 			entry.event, entry.fid, ep);
  		ret = -FI_EOTHER;
  		goto err1;
  	}
@@ -560,21 +543,14 @@ err0:
 
 static int exchange_params(void)
 {
-	char *buf_ptr = buf;
-	void *buffer_address = buf;
-	uint64_t mr_key = fi_mr_key(mr);
-	ssize_t len = sizeof(uintptr_t) + sizeof(uint64_t);
-
-	memcpy(buf_ptr, &buffer_address, sizeof(uintptr_t));
-	memcpy((char*)buf_ptr + sizeof(uintptr_t), &mr_key, sizeof(uint64_t));
-
-	post_recv(buf_ptr + len, len, fi_mr_desc(mr));
-	send_msg(buf_ptr, len, fi_mr_desc(mr));
+	*((uint64_t*)buf) = (uint64_t)buf;
+	*(((uint64_t*)buf + 1)) = fi_mr_key(mr);
+	post_recv();
+	send_msg(sizeof(uint64_t *) * 2);
 	wait_for_completion(rcq, 1);
 
-	buf_ptr = (char*)buf + len;
-	rem_buf = (void *) *((uintptr_t*)(buf_ptr));
-	rem_key = *((uint64_t*)(buf_ptr + sizeof(uintptr_t)));
+	rem_buf = (void *)(*((uint64_t*)buf));
+	rem_key = (uint64_t)(*(((uint64_t*)buf + 1)));
 
 	return 0;
 }
@@ -582,10 +558,10 @@ static int exchange_params(void)
 static int synchronize(void)
 {
 	if(dst_addr){
-		post_recv(buf, sizeof(uintptr_t), fi_mr_desc(mr));
+		post_recv();
 		wait_for_completion(rcq, 1);
 	}else{
-		send_msg(buf, sizeof(uintptr_t), fi_mr_desc(mr));
+		send_msg(sizeof(uint64_t *));
 	}
 	return 0;
 }
@@ -615,7 +591,7 @@ static int run(void)
 		for (i = 0; i < TEST_CNT; i++) {
 			if (test_size[i].option > size_option)
 				continue;
-			init_test(test_size[i].size);
+			init_test(test_size[i].size, test_name, &transfer_size, &iterations);
 			ret = run_test();
 			if(ret)
 				goto out;
@@ -640,7 +616,7 @@ int main(int argc, char **argv)
 {
 	int op, ret;
 
-	while ((op = getopt(argc, argv, "d:n:p:s:C:I:S:")) != -1) {
+	while ((op = getopt(argc, argv, "d:n:p:s:C:I:o:w:S:")) != -1) {
 		switch (op) {
 		case 'd':
 			dst_addr = optarg;
@@ -658,6 +634,17 @@ int main(int argc, char **argv)
 			custom = 1;
 			iterations = atoi(optarg);
 			break;
+		case 'o':
+			if (!strcmp(optarg, "read"))
+				op_type = READ;
+			else if (!strcmp(optarg, "write"))
+				op_type = WRITE;
+			else
+				usage(argv[0]);
+			break;
+		case 'w':
+			warmup_iters = atoi(optarg);
+			break;
 		case 'S':
 			if (!strncasecmp("all", optarg, 3)) {
 				size_option = 1;
@@ -667,14 +654,7 @@ int main(int argc, char **argv)
 			}
 			break;
 		default:
-			fprintf(stderr, "usage: %s\n", argv[0]);
-			fprintf(stderr, "\t[-d destination_address]\n");
-			fprintf(stderr, "\t[-n domain_name]\n");
-			fprintf(stderr, "\t[-p port_number]\n");
-			fprintf(stderr, "\t[-s source_address]\n");
-			fprintf(stderr, "\t[-I iterations]\n");
-			fprintf(stderr, "\t[-S transfer_size or 'all']\n");
-			exit(1);
+			usage(argv[0]);
 		}
 	}
 

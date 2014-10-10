@@ -52,32 +52,6 @@
 #include <shared.h>
 
 
-struct test_size_param {
-	int size;
-	int option;
-};
-
-static struct test_size_param test_size[] = {
-	{ 1 <<  6, 0 },
-	{ 1 <<  7, 1 }, { (1 <<  7) + (1 <<  6), 1},
-	{ 1 <<  8, 1 }, { (1 <<  8) + (1 <<  7), 1},
-	{ 1 <<  9, 1 }, { (1 <<  9) + (1 <<  8), 1},
-	{ 1 << 10, 1 }, { (1 << 10) + (1 <<  9), 1},
-	{ 1 << 11, 1 }, { (1 << 11) + (1 << 10), 1},
-	{ 1 << 12, 0 }, { (1 << 12) + (1 << 11), 1},
-	{ 1 << 13, 1 }, { (1 << 13) + (1 << 12), 1},
-	{ 1 << 14, 1 }, { (1 << 14) + (1 << 13), 1},
-	{ 1 << 15, 1 }, { (1 << 15) + (1 << 14), 1},
-	{ 1 << 16, 0 }, { (1 << 16) + (1 << 15), 1},
-	{ 1 << 17, 1 }, { (1 << 17) + (1 << 16), 1},
-	{ 1 << 18, 1 }, { (1 << 18) + (1 << 17), 1},
-	{ 1 << 19, 1 }, { (1 << 19) + (1 << 18), 1},
-	{ 1 << 20, 0 }, { (1 << 20) + (1 << 19), 1},
-	{ 1 << 21, 1 }, { (1 << 21) + (1 << 20), 1},
-	{ 1 << 22, 1 }, { (1 << 22) + (1 << 21), 1},
-};
-#define TEST_CNT (sizeof test_size / sizeof test_size[0])
-
 static int custom;
 static int size_option;
 static int iterations = 1000;
@@ -102,41 +76,6 @@ static struct fid_ep *ep;
 static struct fid_eq *cmeq;
 static struct fid_cq *rcq, *scq;
 static struct fid_mr *mr;
-
-
-static void show_perf(void)
-{
-	char str[32];
-	float usec;
-	long long bytes;
-
-	usec = (end.tv_sec - start.tv_sec) * 1000000 + (end.tv_usec - start.tv_usec);
-	bytes = (long long) iterations * transfer_size * 2;
-
-	/* name size transfers iterations bytes seconds Gb/sec usec/xfer */
-	printf("%-10s", test_name);
-	size_str(str, sizeof str, transfer_size);
-	printf("%-8s", str);
-	cnt_str(str, sizeof str, 1);
-	printf("%-8s", str);
-	cnt_str(str, sizeof str, iterations);
-	printf("%-8s", str);
-	size_str(str, sizeof str, bytes);
-	printf("%-8s", str);
-	printf("%8.2fs%10.2f%11.2f\n",
-		usec / 1000000., (bytes * 8) / (1000. * usec),
-		(usec / iterations) / 2);
-}
-
-static void init_test(int size)
-{
-	char sstr[5];
-
-	size_str(sstr, sizeof sstr, size);
-	snprintf(test_name, sizeof test_name, "%s_lat", sstr);
-	transfer_size = size;
-	iterations = size_to_count(transfer_size);
-}
 
 static int poll_all_sends(void)
 {
@@ -234,7 +173,7 @@ static int run_test(void)
 			goto out;
 	}
 	gettimeofday(&end, NULL);
-	show_perf();
+	show_perf(start, end, transfer_size, iterations, test_name);
 	ret = 0;
 
 out:
@@ -412,37 +351,34 @@ err0:
 static int server_connect(void)
 {
 	struct fi_eq_cm_entry entry;
-	enum fi_eq_event event;
-	struct fi_info *info = NULL;
 	ssize_t rd;
 	int ret;
 
-	rd = fi_eq_sread(cmeq, &event, &entry, sizeof entry, -1, 0);
+	rd = fi_eq_condread(cmeq, &entry, sizeof entry, NULL, -1, 0);
 	if (rd != sizeof entry) {
-		printf("fi_eq_sread %zd %s\n", rd, fi_strerror((int) -rd));
+		printf("fi_eq_condread %zd %s\n", rd, fi_strerror((int) -rd));
 		return (int) rd;
 	}
 
-	if (event != FI_CONNREQ) {
-		printf("Unexpected CM event %d\n", event);
+	if (entry.event != FI_CONNREQ) {
+		printf("Unexpected CM event %d\n", entry.event);
 		ret = -FI_EOTHER;
 		goto err1;
 	}
 
-	info = entry.info;
-	ret = fi_domain(fab, info, &dom, NULL);
+	ret = fi_fdomain(fab, entry.info->domain_attr, &dom, NULL);
 	if (ret) {
 		printf("fi_fdomain %s\n", fi_strerror(-ret));
 		goto err1;
 	}
 
-	ret = fi_endpoint(dom, info, &ep, NULL);
+	ret = fi_endpoint(dom, entry.info, &ep, NULL);
 	if (ret) {
 		printf("fi_endpoint for req %s\n", fi_strerror(-ret));
 		goto err1;
 	}
 
-	ret = alloc_ep_res(info);
+	ret = alloc_ep_res(entry.info);
 	if (ret)
 		 goto err2;
 
@@ -450,26 +386,27 @@ static int server_connect(void)
 	if (ret)
 		goto err3;
 
-	ret = fi_accept(ep, NULL, 0);
+	ret = fi_accept(ep, entry.connreq, NULL, 0);
+	entry.connreq = NULL;
 	if (ret) {
 		printf("fi_accept %s\n", fi_strerror(-ret));
 		goto err3;
 	}
 
-	rd = fi_eq_sread(cmeq, &event, &entry, sizeof entry, -1, 0);
+	rd = fi_eq_condread(cmeq, &entry, sizeof entry, NULL, -1, 0);
 	if (rd != sizeof entry) {
-		printf("fi_eq_sread %zd %s\n", rd, fi_strerror((int) -rd));
+		printf("fi_eq_condread %zd %s\n", rd, fi_strerror((int) -rd));
 		goto err3;
 	}
 
-	if (event != FI_COMPLETE || entry.fid != &ep->fid) {
+	if (entry.event != FI_COMPLETE || entry.fid != &ep->fid) {
 		printf("Unexpected CM event %d fid %p (ep %p)\n",
-			event, entry.fid, ep);
+			entry.event, entry.fid, ep);
 		ret = -FI_EOTHER;
 		goto err3;
 	}
 
-	fi_freeinfo(info);
+	fi_freeinfo(entry.info);
 	return 0;
 
 err3:
@@ -477,15 +414,15 @@ err3:
 err2:
 	fi_close(&ep->fid);
 err1:
-	fi_reject(pep, info->connreq, NULL, 0);
-	fi_freeinfo(info);
+	if (entry.connreq)
+		fi_reject(pep, entry.connreq, NULL, 0);
+	fi_freeinfo(entry.info);
 	return ret;
 }
 
 static int client_connect(void)
 {
 	struct fi_eq_cm_entry entry;
-	enum fi_eq_event event;
 	struct fi_info *fi;
 	ssize_t rd;
 	int ret;
@@ -509,7 +446,7 @@ static int client_connect(void)
 		goto err1;
 	}
 
-	ret = fi_domain(fab, fi, &dom, NULL);
+	ret = fi_fdomain(fab, fi->domain_attr, &dom, NULL);
 	if (ret) {
 		printf("fi_fdomain %s %s\n", fi_strerror(-ret),
 			fi->domain_attr->name);
@@ -536,15 +473,15 @@ static int client_connect(void)
 		goto err5;
 	}
 
-	rd = fi_eq_sread(cmeq, &event, &entry, sizeof entry, -1, 0);
+	rd = fi_eq_condread(cmeq, &entry, sizeof entry, NULL, -1, 0);
 	if (rd != sizeof entry) {
 		printf("fi_eq_condread %zd %s\n", rd, fi_strerror((int) -rd));
 		return (int) rd;
 	}
 
-	if (event != FI_COMPLETE || entry.fid != &ep->fid) {
+	if (entry.event != FI_COMPLETE || entry.fid != &ep->fid) {
 		printf("Unexpected CM event %d fid %p (ep %p)\n",
-			event, entry.fid, ep);
+			entry.event, entry.fid, ep);
 		ret = -FI_EOTHER;
 		goto err1;
 	}
@@ -591,7 +528,7 @@ static int run(void)
 		for (i = 0; i < TEST_CNT; i++) {
 			if (test_size[i].option > size_option)
 				continue;
-			init_test(test_size[i].size);
+			init_test(test_size[i].size, test_name, &transfer_size, &iterations);
 			run_test();
 		}
 	} else {
@@ -658,6 +595,7 @@ int main(int argc, char **argv)
 	hints.ep_attr = &ep_hints;
 	hints.type = FI_EP_MSG;
 	hints.ep_cap = FI_MSG;
+	domain_hints.caps = FI_LOCAL_MR;
 	hints.addr_format = FI_SOCKADDR;
 
 	ret = run();

@@ -39,11 +39,26 @@
 extern "C" {
 #endif
 
+struct test_size_param {
+	int size;
+	int option;
+};
+
+#define TEST_SIZE_LEN 33
+extern struct test_size_param test_size[TEST_SIZE_LEN];
+
+#define TEST_CNT (sizeof test_size / sizeof test_size[0])
 
 int getaddr(char *node, char *service, struct sockaddr **addr, socklen_t *len);
 void size_str(char *str, size_t ssize, long long size);
 void cnt_str(char *str, size_t ssize, long long cnt);
 int size_to_count(int size);
+void show_perf(struct timeval start, 
+						struct timeval end, 
+						int transfer_size, 
+						int iterations, 
+						char *test_name);
+void init_test(int size, char *test_name, int *transfer_size, int *iterations);
 
 #define MIN(a,b) (((a)<(b))?(a):(b))
 #define MAX(a,b) (((a)>(b))?(a):(b))
