@@ -98,7 +98,6 @@ static int size_option;
 static int iterations = 1000;
 static int transfer_size = 1000;
 static int max_credits = 128;
-static int warmup_iters = 128;
 static char test_name[10] = "custom";
 static struct timeval start, end;
 static void *buf;
@@ -171,11 +170,11 @@ static int wait_for_completion(struct fid_cq *cq, int num_completions)
 	return 0;
 }
 
-static int send_msg(int size)
+static int send_msg(void *buffer, size_t len, void *desc)
 {
 	int ret;
 
-	ret = fi_send(ep, buf, (size_t) size, fi_mr_desc(mr), NULL);
+	ret = fi_send(ep, buffer, len, desc, NULL);
 	if (ret){
 		fprintf(stderr, "fi_send %d (%s)\n", ret, fi_strerror(-ret));
 		return ret;
@@ -184,11 +183,11 @@ static int send_msg(int size)
 	return wait_for_completion(scq, 1);
 }
 
-static int post_recv()
+static int post_recv(void *buffer, size_t len, void *desc)
 {
 	int ret;
 
-	ret = fi_recv(ep, buf, buffer_size, fi_mr_desc(mr), NULL);
+	ret = fi_recv(ep, buffer, len, desc, NULL);
 	if (ret){
 		fprintf(stderr, "fi_recv %d (%s)\n", ret, fi_strerror(-ret));
 		return ret;
@@ -210,25 +209,9 @@ static int write_data(size_t size)
 	return 0;
 }
 
-static int warmup(int iters)
-{
-	int ret, i;
-	for(i = 0; i<iters; i++){
-		if((ret = write_data(16)) < 0)
-			return ret;
-		if((ret = wait_for_completion(scq, 1)) < 0)
-			return ret;
-	}
-	return 0;
-}
-
 static int run_test(void)
 {
 	int ret, i;
-
-	ret = warmup(warmup_iters);
-	if (ret)
-		goto out;
 
 	gettimeofday(&start, NULL);
 	for (i = 0; i < iterations; i++) {
@@ -280,7 +263,7 @@ static int alloc_ep_res(struct fi_info *fi)
 	int ret;
 
 	buffer_size = !custom ? test_size[TEST_CNT - 1].size : transfer_size;
-	buf = malloc(MAX(buffer_size, sizeof(uint64_t)));
+	buf = malloc(MAX(buffer_size, sizeof(uintptr_t) + sizeof(uint64_t)));
 	if (!buf) {
 		perror("malloc");
 		return -1;
@@ -302,7 +285,7 @@ static int alloc_ep_res(struct fi_info *fi)
 		goto err2;
 	}
 	
-	ret = fi_mr_reg(dom, buf, MAX(buffer_size, sizeof(uint64_t)), 
+	ret = fi_mr_reg(dom, buf, MAX(buffer_size, sizeof(uint64_t) + sizeof(uintptr_t)),
 			FI_REMOTE_WRITE, 0, 0, 0, &mr, NULL);
 	if (ret) {
 		fprintf(stderr, "fi_mr_reg %s\n", fi_strerror(-ret));
@@ -577,14 +560,21 @@ err0:
 
 static int exchange_params(void)
 {
-	*((uint64_t*)buf) = (uint64_t)buf;
-	*(((uint64_t*)buf + 1)) = fi_mr_key(mr);
-	post_recv();
-	send_msg(sizeof(uint64_t *) * 2);
+	char *buf_ptr = buf;
+	void *buffer_address = buf;
+	uint64_t mr_key = fi_mr_key(mr);
+	ssize_t len = sizeof(uintptr_t) + sizeof(uint64_t);
+
+	memcpy(buf_ptr, &buffer_address, sizeof(uintptr_t));
+	memcpy((char*)buf_ptr + sizeof(uintptr_t), &mr_key, sizeof(uint64_t));
+
+	post_recv(buf_ptr + len, len, fi_mr_desc(mr));
+	send_msg(buf_ptr, len, fi_mr_desc(mr));
 	wait_for_completion(rcq, 1);
 
-	rem_buf = (void *)(*((uint64_t*)buf));
-	rem_key = (uint64_t)(*(((uint64_t*)buf + 1)));
+	buf_ptr = (char*)buf + len;
+	rem_buf = (void *) *((uintptr_t*)(buf_ptr));
+	rem_key = *((uint64_t*)(buf_ptr + sizeof(uintptr_t)));
 
 	return 0;
 }
@@ -592,10 +582,10 @@ static int exchange_params(void)
 static int synchronize(void)
 {
 	if(dst_addr){
-		post_recv();
+		post_recv(buf, sizeof(uintptr_t), fi_mr_desc(mr));
 		wait_for_completion(rcq, 1);
 	}else{
-		send_msg(sizeof(uint64_t *));
+		send_msg(buf, sizeof(uintptr_t), fi_mr_desc(mr));
 	}
 	return 0;
 }
@@ -650,7 +640,7 @@ int main(int argc, char **argv)
 {
 	int op, ret;
 
-	while ((op = getopt(argc, argv, "d:n:p:s:C:I:w:S:")) != -1) {
+	while ((op = getopt(argc, argv, "d:n:p:s:C:I:S:")) != -1) {
 		switch (op) {
 		case 'd':
 			dst_addr = optarg;
@@ -668,9 +658,6 @@ int main(int argc, char **argv)
 			custom = 1;
 			iterations = atoi(optarg);
 			break;
-		case 'w':
-			warmup_iters = atoi(optarg);
-			break;
 		case 'S':
 			if (!strncasecmp("all", optarg, 3)) {
 				size_option = 1;
@@ -686,7 +673,6 @@ int main(int argc, char **argv)
 			fprintf(stderr, "\t[-p port_number]\n");
 			fprintf(stderr, "\t[-s source_address]\n");
 			fprintf(stderr, "\t[-I iterations]\n");
-			fprintf(stderr, "\t[-w warmup iterations]\n");
 			fprintf(stderr, "\t[-S transfer_size or 'all']\n");
 			exit(1);
 		}
