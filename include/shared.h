@@ -57,7 +57,8 @@ void show_perf(struct timeval start,
 						struct timeval end, 
 						int transfer_size, 
 						int iterations, 
-						char *test_name);
+						char *test_name,
+						int bidirectional);
 void init_test(int size, char *test_name, int *transfer_size, int *iterations);
 
 #define MIN(a,b) (((a)<(b))?(a):(b))

@@ -132,12 +132,15 @@ void show_perf(struct timeval start,
 						struct timeval end, 
 						int transfer_size, 
 						int iterations, 
-						char *test_name)
+						char *test_name,
+						int bidirectional)
 {
 	char str[32];
 	float usec;
 	long long bytes;
+	int div;
 
+	div = bidirectional ? 2 : 1;
 	usec = (end.tv_sec - start.tv_sec) * 1000000 + (end.tv_usec - start.tv_usec);
 	bytes = (long long) iterations * transfer_size * 2;
 
@@ -153,7 +156,7 @@ void show_perf(struct timeval start,
 	printf("%-8s", str);
 	printf("%8.2fs%10.2f%11.2f\n",
 		usec / 1000000., (bytes * 8) / (1000. * usec),
-		(usec / iterations) / 2);
+		(usec / iterations) / div);
 }
 
 void init_test(int size, char *test_name, int *transfer_size, int *iterations)

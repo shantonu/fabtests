@@ -1,15 +1,15 @@
 AM_CFLAGS = -g -Wall -D_GNU_SOURCE -I$(srcdir)/include
 
 bin_PROGRAMS = \
-	simple/fi_pingpong \
-	simple/fi_rma
+	simple/fi_msg_pingpong \
+	simple/fi_msg_rma
 
-simple_fi_pingpong_SOURCES = \
-	simple/pingpong.c \
+simple_fi_msg_pingpong_SOURCES = \
+	simple/msg_pingpong.c \
 	common/shared.c
 
-simple_fi_rma_SOURCES = \
-	simple/rma.c \
+simple_fi_msg_rma_SOURCES = \
+	simple/msg_rma.c \
 	common/shared.c
 
 man_MANS = man/fabtests.7
