@@ -49,9 +49,12 @@
 #include <rdma/fi_errno.h>
 #include <rdma/fi_endpoint.h>
 #include <rdma/fi_cm.h>
+#include <rdma/fi_tagged.h>
 #include <shared.h>
 #include "pushtotalk.h"
 
+
+#define TAG 0x01234567
 
 static int custom;
 static int size_option;
@@ -84,7 +87,7 @@ struct fi_context fi_ctx_recv;
 
 static int poll_all_sends(void)
 {
-	struct fi_cq_entry comp;
+	struct fi_cq_tagged_entry comp;
 	int ret;
 
 	do {
@@ -101,7 +104,7 @@ static int poll_all_sends(void)
 
 static int send_xfer(int size)
 {
-	struct fi_cq_entry comp;
+	struct fi_cq_tagged_entry comp;
 	int ret;
 
 	while (!credits) {
@@ -116,16 +119,16 @@ static int send_xfer(int size)
 
 	credits--;
 post:
-	ret = fi_sendto(ep, buf, (size_t) size, fi_mr_desc(mr), remote_fi_addr, &fi_ctx_send);
+	ret = fi_tsendto(ep, buf, (size_t) size, fi_mr_desc(mr), remote_fi_addr, TAG, &fi_ctx_send);
 	if (ret)
-		printf("fi_sendto %d (%s)\n", ret, fi_strerror(-ret));
+		printf("fi_send %d (%s)\n", ret, fi_strerror(-ret));
 
 	return ret;
 }
 
 static int recv_xfer(int size)
 {
-	struct fi_cq_entry comp;
+	struct fi_cq_tagged_entry comp;
 	int ret;
 
 	do {
@@ -136,9 +139,9 @@ static int recv_xfer(int size)
 		}
 	} while (!ret);
 
-	ret = fi_recvfrom(ep, buf, buffer_size, fi_mr_desc(mr), remote_fi_addr, &fi_ctx_recv);
+	ret = fi_trecvfrom(ep, buf, buffer_size, fi_mr_desc(mr), remote_fi_addr, TAG, 0, &fi_ctx_recv);
 	if (ret)
-		printf("fi_recvfrom %d (%s)\n", ret, fi_strerror(-ret));
+		printf("fi_trecvfrom %d (%s)\n", ret, fi_strerror(-ret));
 
 	return ret;
 }
@@ -207,7 +210,7 @@ static int alloc_ep_res(struct fi_info *fi)
 	}
 
 	memset(&cq_attr, 0, sizeof cq_attr);
-	cq_attr.format = FI_CQ_FORMAT_CONTEXT;
+	cq_attr.format = FI_CQ_FORMAT_TAGGED;
 	cq_attr.wait_obj = FI_WAIT_NONE;
 	cq_attr.size = max_credits << 1;
 	ret = fi_cq_open(dom, &cq_attr, &scq, NULL);
@@ -306,13 +309,15 @@ static int init_fabric(void)
 		return ret;
 	}
 
-	/* Get remote address. For PSM provider, SFI_PSM_NAME_SERVER env variable needs to be set to 1 */
+	/* Get remote address. For PSM provider, SFI_PSM_NAME_SERVER env variable
+	 * needs to be set to 1 for this to work */
 	if (dst_addr) {
 		addrlen = fi->dest_addrlen;
 		memcpy(&remote_addr, fi->dest_addr, addrlen);
 	} else {
 		addrlen = sizeof(local_addr);
 	}
+
 
 	ret = fi_fabric(fi->fabric_attr, &fab, NULL);
 	if (ret) {
@@ -372,7 +377,7 @@ static int populate_av(void)
 
 static int exchange_params(void)
 {
-	struct fi_cq_entry comp;
+	struct fi_cq_tagged_entry comp;
 	int ret;
 
 	/* Get local address blob */
@@ -415,7 +420,7 @@ static int exchange_params(void)
 			return ret;
 	}
 
-	ret = fi_recvfrom(ep, buf, buffer_size, fi_mr_desc(mr), remote_fi_addr, &fi_ctx_recv);
+	ret = fi_trecvfrom(ep, buf, buffer_size, fi_mr_desc(mr), remote_fi_addr, TAG, 0, &fi_ctx_recv);
 	if (ret)
 		printf("fi_recvfrom %d (%s)\n", ret, fi_strerror(-ret));
 
@@ -445,6 +450,7 @@ static int run(void)
 			run_test();
 		}
 	} else {
+
 		ret = run_test();
 	}
 
@@ -504,7 +510,8 @@ int main(int argc, char **argv)
 	hints.domain_attr = &domain_hints;
 	hints.ep_attr = &ep_hints;
 	hints.type = FI_EP_RDM;
-	hints.ep_cap = FI_MSG | FI_BUFFERED_RECV;
+	hints.ep_cap = FI_MSG | FI_TAGGED | FI_BUFFERED_RECV;
+	/* No support from PSM provider */
 	//domain_hints.caps = FI_LOCAL_MR;
 	hints.addr_format = FI_ADDR_PROTO;
 
