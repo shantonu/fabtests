@@ -51,7 +51,6 @@
 #include <rdma/fi_cm.h>
 #include <rdma/fi_tagged.h>
 #include <shared.h>
-#include "pushtotalk.h"
 
 
 #define TAG 0x01234567
