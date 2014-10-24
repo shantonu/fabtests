@@ -6,7 +6,8 @@ bin_PROGRAMS = \
 	simple/fi_rdm_tagged_pingpong \
 	simple/fi_msg_rma \
 	simple/fi_rdm_rma \
-	simple/fi_msg_atomics
+	simple/fi_msg_atomics \
+	simple/fi_msg_pingpong_tagged
 
 simple_fi_msg_pingpong_SOURCES = \
 	simple/msg_pingpong.c \
@@ -30,6 +31,10 @@ simple_fi_rdm_rma_SOURCES = \
 
 simple_fi_msg_atomics_SOURCES = \
 	simple/msg_atomics.c \
+	common/shared.c
+
+simple_fi_msg_pingpong_tagged_SOURCES = \
+	simple/msg_pingpong_tagged.c \
 	common/shared.c
 
 man_MANS = man/fabtests.7
