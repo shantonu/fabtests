@@ -214,7 +214,6 @@ static int wait_for_completion(struct fid_cq *cq, int num_completions)
 static int send_msg(int size)
 {
 	int ret;
-
 	
 	fi_context = (struct fi_context *) malloc(sizeof(struct fi_context));
 	printf("[fi_send] %p\n",fi_context);
@@ -233,7 +232,8 @@ static int post_recv(int size)
 	
 	fi_context = (struct fi_context *) malloc(sizeof(struct fi_context));
 	printf("[fi_recv] %p\n", fi_context);
-	ret = fi_recv(ep, buf, buffer_size, fi_mr_desc(mr), fi_context);
+	ret = fi_recv(ep, buf, (size_t) size, fi_mr_desc(mr), fi_context);
+	
 	if (ret){
 		fprintf(stderr, "fi_recv %d (%s)\n", ret, fi_strerror(-ret));
 		return ret;
@@ -336,7 +336,8 @@ static int atomic_op(size_t size, enum fi_op op)
  
         		}
 			else {
-        			ret = fi_compare_atomic(ep, buf, 1, fi_mr_desc(mr), compare, fi_mr_desc(mr_compare), result, fi_mr_desc(mr_result), remote.addr, remote.key, datatype, op, fi_context);
+        			printf("[fi_compare_atomic] %p", fi_context);
+				ret = fi_compare_atomic(ep, buf, 1, fi_mr_desc(mr), compare, fi_mr_desc(mr_compare), result, fi_mr_desc(mr_result), remote.addr, remote.key, datatype, op, fi_context);
         			if (ret) {
                 			fprintf(stderr, "fi_compare_atomic %d (%s)\n", ret, fi_strerror(-ret));
 				}
@@ -348,7 +349,8 @@ static int atomic_op(size_t size, enum fi_op op)
         		}
 			break;
 		default:
-			return 0;		
+			return 0;
+			break;		
 	}
 	// ??
 	//synchronize();
@@ -412,6 +414,8 @@ static int alloc_cm_res(void)
 static void free_ep_res(void)
 {
 	fi_close(&mr->fid);
+	fi_close(&mr_result->fid);
+	fi_close(&mr_compare->fid);
 	fi_close(&rcq->fid);
 	fi_close(&scq->fid);
 	free(buf);
@@ -761,20 +765,20 @@ static int exchange_params(void)
 	local.addr = (uint64_t)buf;
 	local.key = fi_mr_key(mr);
 
-	if (dst_addr) 
-	{
+	if (dst_addr) {
 		*(struct addr_key *)buf = local;
 		send_msg(len);
 	} else {
 		post_recv(len);
 		wait_for_completion(rcq, 1);
-		remote = *(struct addr_key *)buf;
+		remote = *(struct addr_key *)buf;	
 	}
 
 	if (dst_addr) {
 		post_recv(len);
 		wait_for_completion(rcq, 1);
 		remote = *(struct addr_key *)buf;
+
 	} else {
 		*(struct addr_key *)buf = local;
 		send_msg(len);
@@ -875,6 +879,7 @@ int main(int argc, char **argv)
 	hints.ep_attr = &ep_hints;
 	hints.type = FI_EP_MSG;
 	hints.ep_cap = FI_MSG | FI_ATOMICS;
+	//hints.ep_cap = FI_MSG | FI_RMA;
 	hints.addr_format = FI_SOCKADDR;
 
 	ret = run();
