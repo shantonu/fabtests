@@ -95,6 +95,7 @@ static struct fid_cq *rcq, *scq;
 static struct fid_mr *mr;
 static struct fid_mr *mr_result;
 static struct fid_mr *mr_compare;
+static struct fi_context *fi_context;
 
 static int run_all = 0;
 
@@ -106,7 +107,7 @@ void usage(char *name)
 	fprintf(stderr, "\t[-p port_number]\n");
 	fprintf(stderr, "\t[-s source_address]\n");
 	fprintf(stderr, "\t[-I iterations]\n");
-	fprintf(stderr, "\t[-o min|max|sum|prod|lor|land|bor|band|lxor|bxor|read|write|cswap|cswap_ne|cswap_le|cswap_lt|cswap_ge|cswap_gt|mswap] (default: min)\n");
+	fprintf(stderr, "\t[-o min|max|sum|prod|lor|land|bor|band|lxor|bxor|read|write\n|cswap|cswap_ne|cswap_le|cswap_lt|cswap_ge|cswap_gt|mswap] (default: min)\n");
 	fprintf(stderr, "\t[-S transfer_size or 'all']\n");
 	exit(1);
 }
@@ -189,13 +190,21 @@ static int wait_for_completion(struct fid_cq *cq, int num_completions)
 {
 	int ret;
 	struct fi_cq_entry comp;
+	struct fi_cq_err_entry err;
 	
-	while(num_completions>0){
+	while(num_completions > 0)
+	{
 		ret = fi_cq_read(cq, &comp, sizeof comp);
-		if (ret > 0) {
+		if (ret > 0) 
+		{
 			num_completions--;
+			printf("[wait_for_completion] %p\n",comp.op_context);
 		} else if (ret < 0) {
-			printf("Completion queue read %d (%s)\n", ret, fi_strerror(-ret));
+			printf("[wait_for_completion][error] %p\n", comp.op_context);
+			//printf("Completion queue read %d (%s)\n", ret, fi_strerror(-ret));
+			fi_cq_readerr(cq, &err, sizeof err, 0);
+			printf("Completion queue read %d (%s)\n", ret,
+			fi_cq_strerror(cq, err.prov_errno, err.err_data, NULL, 0));
 			return ret;
 		}
 	}
@@ -206,7 +215,10 @@ static int send_msg(int size)
 {
 	int ret;
 
-	ret = fi_send(ep, buf, (size_t) size, fi_mr_desc(mr), NULL);
+	
+	fi_context = (struct fi_context *) malloc(sizeof(struct fi_context));
+	printf("[fi_send] %p\n",fi_context);
+	ret = fi_send(ep, buf, (size_t) size, fi_mr_desc(mr), fi_context);
 	if (ret){
 		fprintf(stderr, "fi_send %d (%s)\n", ret, fi_strerror(-ret));
 		return ret;
@@ -218,8 +230,10 @@ static int send_msg(int size)
 static int post_recv(int size)
 {
 	int ret;
-
-	ret = fi_recv(ep, buf, buffer_size, fi_mr_desc(mr), NULL);
+	
+	fi_context = (struct fi_context *) malloc(sizeof(struct fi_context));
+	printf("[fi_recv] %p\n", fi_context);
+	ret = fi_recv(ep, buf, buffer_size, fi_mr_desc(mr), fi_context);
 	if (ret){
 		fprintf(stderr, "fi_recv %d (%s)\n", ret, fi_strerror(-ret));
 		return ret;
@@ -228,14 +242,28 @@ static int post_recv(int size)
 	return ret;
 }
 
+
+static int synchronize(void)
+{
+	printf("synchronizing..\n");
+	if (dst_addr) {
+		post_recv(sizeof(uint64_t));
+		wait_for_completion(rcq, 1);
+	} else {
+		send_msg(sizeof(uint64_t));
+	}
+	return 0;
+}
+
 static int atomic_op(size_t size, enum fi_op op)
 {
 	
 	// performing atmics operation on UINT_64 as an example
 	enum fi_datatype datatype = FI_UINT64;
 	size_t *count = (size_t*) malloc(sizeof(size_t));
+	fi_context = (struct fi_context *) malloc(sizeof(struct fi_context));
 	int ret;
-
+	
 	switch(op)
 	{	
 		// atomic operations usable with base atomic and fetch atomic functions
@@ -257,47 +285,42 @@ static int atomic_op(size_t size, enum fi_op op)
         		if (ret) {
                 		fprintf(stderr, "Provider doesn't support %s atomic operation\n", get_fi_op_name(op));
         		}
-			else
-			{
-
+			else {
         			printf("fi_atomic for %s\n", get_fi_op_name(op));
-				ret = fi_atomic(ep, buf, 1, fi_mr_desc(mr), remote.addr, remote.key, datatype, op, NULL);
+				printf("[fi_atomic] %p\n", fi_context);
+				ret = fi_atomic(ep, buf, 1, fi_mr_desc(mr), remote.addr, remote.key, datatype, op, fi_context);
         			if (ret) {
                 			fprintf(stderr, "fi_atomic %d (%s)\n", ret, fi_strerror(-ret));
 				}
-				else
-				{
-				
+				else {
 					printf("wait_for_compl atomic for %s\n", get_fi_op_name(op));
 					ret = wait_for_completion(scq, 1);
 					if (ret)
 						return ret;
 				}
 			}
-
 			// using fetch atomic function
 			// check if the atomic operation is valid
         		ret = fi_fetch_atomicvalid(ep, datatype, op, count);
         		if (ret) {
                 		fprintf(stderr, "Provider doesn't support %s fetch atomic operation\n", get_fi_op_name(op));
         		}
-			else
-			{
+			else {
         			printf("fi_fetch_atomic for %s\n", get_fi_op_name(op));
-        			ret = fi_fetch_atomic(ep, buf, 1, fi_mr_desc(mr), result, fi_mr_desc(mr_result), remote.addr, remote.key, datatype, op, NULL);
+				printf("[fi_fetch_atomic] %p\n", fi_context);
+        			ret = fi_fetch_atomic(ep, buf, 1, fi_mr_desc(mr), result, fi_mr_desc(mr_result), remote.addr, remote.key, datatype, op, fi_context);
         			if (ret) {
                 			fprintf(stderr, "fi_fetch_atomic %d (%s)\n", ret, fi_strerror(-ret));
 				}
-				else
-				{						
+				else {						
 					printf("wait_for_compl fetch_atomic for %s\n", get_fi_op_name(op));
 					ret = wait_for_completion(scq, 1);
 					if (ret)
 						return ret;
 				}
         		}
-			break;
-
+      			break;
+                                                                                   
 		// compare atomic functions 
 		case FI_CSWAP:
 		case FI_CSWAP_NE:
@@ -312,15 +335,12 @@ static int atomic_op(size_t size, enum fi_op op)
                 		fprintf(stderr, "Provider doesn't support %s compare atomic operation\n", get_fi_op_name(op));
  
         		}
-			else
-			{
-        			ret = fi_compare_atomic(ep, buf, 1, fi_mr_desc(mr), compare, fi_mr_desc(mr_compare), result, fi_mr_desc(mr_result), remote.addr, remote.key, datatype, op, NULL);
-        			if (ret) 
-				{
+			else {
+        			ret = fi_compare_atomic(ep, buf, 1, fi_mr_desc(mr), compare, fi_mr_desc(mr_compare), result, fi_mr_desc(mr_result), remote.addr, remote.key, datatype, op, fi_context);
+        			if (ret) {
                 			fprintf(stderr, "fi_compare_atomic %d (%s)\n", ret, fi_strerror(-ret));
 				}
-				else
-				{			
+				else {			
 					ret = wait_for_completion(scq, 1);
 					if (ret)
 						return ret;
@@ -329,19 +349,9 @@ static int atomic_op(size_t size, enum fi_op op)
 			break;
 		default:
 			return 0;		
-	}	
-
-	return 0;
-}
-
-static int synchronize(void)
-{
-	if (dst_addr) {
-		post_recv(sizeof(uint64_t));
-		wait_for_completion(rcq, 1);
-	} else {
-		send_msg(sizeof(uint64_t));
 	}
+	// ??
+	//synchronize();
 	return 0;
 }
 
@@ -360,9 +370,6 @@ static int run_test(void)
 				ret = atomic_op(transfer_size, op_type);
 				if (ret)
 					goto out;
-				/*ret = wait_for_completion(scq, 1);
-				if (ret)
-					goto out;*/
 			}
 		}
 	}
@@ -372,12 +379,10 @@ static int run_test(void)
 			ret = atomic_op(transfer_size, op_type);
 			if (ret)
 				goto out;
-			/*ret = wait_for_completion(scq, 1);
-			if (ret)
-				goto out;*/
 		}
 	}
 	gettimeofday(&end, NULL);
+	synchronize();
 	show_perf(start, end, transfer_size, iterations, test_name, 0);
 	ret = 0;
 
@@ -410,6 +415,9 @@ static void free_ep_res(void)
 	fi_close(&rcq->fid);
 	fi_close(&scq->fid);
 	free(buf);
+	free(result);
+	free(compare);
+	free(fi_context);
 }
 
 static int alloc_ep_res(struct fi_info *fi)
@@ -626,6 +634,7 @@ static int server_connect(void)
 		goto err3;
 
 	ret = fi_accept(ep, entry.connreq, NULL, 0);
+	entry.connreq = NULL;
 	if (ret) {
 		fprintf(stderr, "fi_accept %s\n", fi_strerror(-ret));
 		goto err3;
@@ -633,7 +642,7 @@ static int server_connect(void)
 
 	rd = fi_eq_condread(cmeq, &entry, sizeof entry, NULL, -1, 0);
  	if (rd != sizeof entry) {
-		fprintf(stderr, "fi_eq_sread %zd %s\n", rd, fi_strerror((int) -rd));
+		fprintf(stderr, "fi_eq_condread %zd %s\n", rd, fi_strerror((int) -rd));
 		goto err3;
  	}
 
@@ -807,7 +816,8 @@ static int run(void)
 	} else {
 		ret = run_test();
 	}
-	synchronize();
+	
+	//synchronize();
 
 out:
 	fi_shutdown(ep, 0);
