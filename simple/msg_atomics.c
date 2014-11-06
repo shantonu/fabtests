@@ -72,6 +72,7 @@ static int size_option;
 static int iterations = 1000;
 static int transfer_size = 1000;
 static int max_credits = 128;
+static int credits = 128;
 static char test_name[10] = "custom";
 static struct timeval start, end;
 static void *buf;
@@ -96,6 +97,9 @@ static struct fid_mr *mr;
 static struct fid_mr *mr_result;
 static struct fid_mr *mr_compare;
 static struct fi_context *fi_context;
+// performing atmics operation on UINT_64 as an example
+static enum fi_datatype datatype = FI_UINT64;
+static size_t *count;
 
 static int run_all = 0;
 
@@ -107,7 +111,9 @@ void usage(char *name)
 	fprintf(stderr, "\t[-p port_number]\n");
 	fprintf(stderr, "\t[-s source_address]\n");
 	fprintf(stderr, "\t[-I iterations]\n");
-	fprintf(stderr, "\t[-o min|max|sum|prod|lor|land|bor|band|lxor|bxor|read|write\n|cswap|cswap_ne|cswap_le|cswap_lt|cswap_ge|cswap_gt|mswap] (default: min)\n");
+	fprintf(stderr, "\t[-o min|max|sum|prod|lor|land|bor|band|lxor|bxor|"
+		"\n\tread|write|cswap|cswap_ne|cswap_le|cswap_lt|cswap_ge|"
+		"\n\tcswap_gt|mswap] (default: min)\n");
 	fprintf(stderr, "\t[-S transfer_size or 'all']\n");
 	exit(1);
 }
@@ -137,10 +143,10 @@ static const char* get_fi_op_name(enum fi_op op)
 		case FI_MSWAP: return "mswap";
 		
 		default: return "";
-	
 	}	
 
 }
+
 static enum fi_op get_fi_op(char *op) {
 	if (!strcmp(op, "min"))
 		return FI_MIN;
@@ -195,16 +201,12 @@ static int wait_for_completion(struct fid_cq *cq, int num_completions)
 	while(num_completions > 0)
 	{
 		ret = fi_cq_read(cq, &comp, sizeof comp);
-		if (ret > 0) 
-		{
+		if (ret > 0) {
 			num_completions--;
-			printf("[wait_for_completion] %p\n",comp.op_context);
 		} else if (ret < 0) {
-			printf("[wait_for_completion][error] %p\n", comp.op_context);
-			//printf("Completion queue read %d (%s)\n", ret, fi_strerror(-ret));
 			fi_cq_readerr(cq, &err, sizeof err, 0);
-			printf("Completion queue read %d (%s)\n", ret,
-			fi_cq_strerror(cq, err.prov_errno, err.err_data, NULL, 0));
+			fprintf(stderr, "Completion queue read %d (%s)\n", 
+			ret, fi_strerror(-ret));
 			return ret;
 		}
 	}
@@ -215,8 +217,6 @@ static int send_msg(int size)
 {
 	int ret;
 	
-	fi_context = (struct fi_context *) malloc(sizeof(struct fi_context));
-	printf("[fi_send] %p\n",fi_context);
 	ret = fi_send(ep, buf, (size_t) size, fi_mr_desc(mr), fi_context);
 	if (ret){
 		fprintf(stderr, "fi_send %d (%s)\n", ret, fi_strerror(-ret));
@@ -230,10 +230,7 @@ static int post_recv(int size)
 {
 	int ret;
 	
-	fi_context = (struct fi_context *) malloc(sizeof(struct fi_context));
-	printf("[fi_recv] %p\n", fi_context);
-	ret = fi_recv(ep, buf, (size_t) size, fi_mr_desc(mr), fi_context);
-	
+	ret = fi_recv(ep, buf, buffer_size, fi_mr_desc(mr), fi_context);
 	if (ret){
 		fprintf(stderr, "fi_recv %d (%s)\n", ret, fi_strerror(-ret));
 		return ret;
@@ -242,149 +239,463 @@ static int post_recv(int size)
 	return ret;
 }
 
-
-static int synchronize(void)
+static int send_xfer(int size)
 {
-	printf("synchronizing..\n");
-	if (dst_addr) {
-		post_recv(sizeof(uint64_t));
-		wait_for_completion(rcq, 1);
-	} else {
-		send_msg(sizeof(uint64_t));
-	}
-	return 0;
+        struct fi_cq_entry comp;
+        int ret;
+
+        while (!credits) {
+                ret = fi_cq_read(scq, &comp, sizeof comp);
+                if (ret > 0) {
+                        goto post;
+                } else if (ret < 0) {
+                        fprintf(stderr, "Completion queue read %d (%s)\n", 
+			ret, fi_strerror(-ret));
+                        return ret;
+                }
+        }
+
+        credits--;
+post:
+        ret = fi_send(ep, buf, (size_t) size, fi_mr_desc(mr), NULL);
+        if (ret)
+                fprintf(stderr, "fi_send %d (%s)\n", ret, fi_strerror(-ret));
+
+        return ret;
 }
 
-static int atomic_op(size_t size, enum fi_op op)
+static int recv_xfer(int size)
 {
-	
-	// performing atmics operation on UINT_64 as an example
-	enum fi_datatype datatype = FI_UINT64;
-	size_t *count = (size_t*) malloc(sizeof(size_t));
-	fi_context = (struct fi_context *) malloc(sizeof(struct fi_context));
+        struct fi_cq_entry comp;
+        int ret;
+
+        do {
+                ret = fi_cq_read(rcq, &comp, sizeof comp);
+                if (ret < 0) {
+                        fprintf(stderr, "Completion queue read %d (%s)\n", ret, 
+			fi_strerror(-ret));
+                        return ret;
+                }
+        } while (!ret);
+
+        ret = fi_recv(ep, buf, buffer_size, fi_mr_desc(mr), buf);
+        if (ret)
+                fprintf(stderr, "fi_recv %d (%s)\n", ret, fi_strerror(-ret));
+
+        return ret;
+}
+
+static int sync_test(void)
+{
+        int ret;
+
+        ret = wait_for_completion(scq, max_credits - credits);
+	if(ret)
+		return ret;
+
+        credits = max_credits;
+
+	ret = dst_addr ? send_xfer(16) : recv_xfer(16);
+        if (ret)
+                return ret;
+
+        return dst_addr ? recv_xfer(16) : send_xfer(16);
+}
+
+static int is_valid_base_atomic_op(enum fi_op op)
+{	
+        int ret;
+
+	ret = fi_atomicvalid(ep, datatype, op, count);
+        if (ret) {
+		fprintf(stderr, "Provider doesn't support %s"
+		" base atomic operation\n", get_fi_op_name(op));
+		return 0;
+        }
+	return 1;		
+}
+
+static int is_valid_fetch_atomic_op(enum fi_op op)
+{		
+        int ret;
+
+	ret = fi_fetch_atomicvalid(ep, datatype, op, count);
+        if (ret) {
+		fprintf(stderr, "Provider doesn't support %s"
+		" fetch atomic operation\n", get_fi_op_name(op));
+		return ret;
+        }
+	return 1;		
+}
+
+static int is_valid_compare_atomic_op(enum fi_op op)
+{		
+        int ret;
+	ret = fi_compare_atomicvalid(ep, datatype, op, count);
+        if (ret) {
+		fprintf(stderr, "Provider doesn't support %s"
+		" compare atomic operation\n", get_fi_op_name(op));
+		return ret;
+        }
+	return 1;		
+}
+
+
+static int execute_base_atomic_op(enum fi_op op)
+{
 	int ret;
 	
-	switch(op)
-	{	
-		// atomic operations usable with base atomic and fetch atomic functions
-		case FI_MIN:
-		case FI_MAX:
-		case FI_SUM:
-		case FI_PROD:
-		case FI_LOR:
-		case FI_LAND:
-		case FI_BOR:
-		case FI_BAND:
-		case FI_LXOR:
-		case FI_BXOR:
-		case FI_ATOMIC_READ:
-		case FI_ATOMIC_WRITE:
-			// using base atomic function 
-			// check if the atomic operation is valid 
-        		ret = fi_atomicvalid(ep, datatype, op, count);
-        		if (ret) {
-                		fprintf(stderr, "Provider doesn't support %s atomic operation\n", get_fi_op_name(op));
-        		}
-			else {
-        			printf("fi_atomic for %s\n", get_fi_op_name(op));
-				printf("[fi_atomic] %p\n", fi_context);
-				ret = fi_atomic(ep, buf, 1, fi_mr_desc(mr), remote.addr, remote.key, datatype, op, fi_context);
-        			if (ret) {
-                			fprintf(stderr, "fi_atomic %d (%s)\n", ret, fi_strerror(-ret));
-				}
-				else {
-					printf("wait_for_compl atomic for %s\n", get_fi_op_name(op));
-					ret = wait_for_completion(scq, 1);
-					if (ret)
-						return ret;
-				}
-			}
-			// using fetch atomic function
-			// check if the atomic operation is valid
-        		ret = fi_fetch_atomicvalid(ep, datatype, op, count);
-        		if (ret) {
-                		fprintf(stderr, "Provider doesn't support %s fetch atomic operation\n", get_fi_op_name(op));
-        		}
-			else {
-        			printf("fi_fetch_atomic for %s\n", get_fi_op_name(op));
-				printf("[fi_fetch_atomic] %p\n", fi_context);
-        			ret = fi_fetch_atomic(ep, buf, 1, fi_mr_desc(mr), result, fi_mr_desc(mr_result), remote.addr, remote.key, datatype, op, fi_context);
-        			if (ret) {
-                			fprintf(stderr, "fi_fetch_atomic %d (%s)\n", ret, fi_strerror(-ret));
-				}
-				else {						
-					printf("wait_for_compl fetch_atomic for %s\n", get_fi_op_name(op));
-					ret = wait_for_completion(scq, 1);
-					if (ret)
-						return ret;
-				}
-        		}
-      			break;
-                                                                                   
-		// compare atomic functions 
-		case FI_CSWAP:
-		case FI_CSWAP_NE:
-		case FI_CSWAP_LE:
-		case FI_CSWAP_LT:
-		case FI_CSWAP_GE:
-		case FI_CSWAP_GT:
-		case FI_MSWAP:
-			// Check if the atomic operation is valid 
-        		ret = fi_compare_atomicvalid(ep, datatype, op, count);
-        		if (ret) {
-                		fprintf(stderr, "Provider doesn't support %s compare atomic operation\n", get_fi_op_name(op));
- 
-        		}
-			else {
-        			printf("[fi_compare_atomic] %p", fi_context);
-				ret = fi_compare_atomic(ep, buf, 1, fi_mr_desc(mr), compare, fi_mr_desc(mr_compare), result, fi_mr_desc(mr_result), remote.addr, remote.key, datatype, op, fi_context);
-        			if (ret) {
-                			fprintf(stderr, "fi_compare_atomic %d (%s)\n", ret, fi_strerror(-ret));
-				}
-				else {			
-					ret = wait_for_completion(scq, 1);
-					if (ret)
-						return ret;
-				}
-        		}
-			break;
-		default:
-			return 0;
-			break;		
+	ret = fi_atomic(ep, buf, 1, fi_mr_desc(mr), remote.addr, 
+		remote.key, datatype, op, fi_context);
+        if (ret) {		
+		fprintf(stderr, "fi_atomic %d (%s)\n", ret, 
+			fi_strerror(-ret));
+		return ret;
+	} else {						
+		ret = wait_for_completion(scq, 1);
+		if (ret)
+			return ret;
 	}
-	// ??
-	//synchronize();
-	return 0;
+	
+	return ret;
+}
+
+static int execute_fetch_atomic_op(enum fi_op op)
+{
+	int ret;
+	
+	ret = fi_fetch_atomic(ep, buf, 1, fi_mr_desc(mr), result, 
+		fi_mr_desc(mr_result), remote.addr, remote.key, 
+		datatype, op, fi_context);
+        if (ret) {		
+		fprintf(stderr, "fi_fetch_atomic %d (%s)\n", 
+			ret, fi_strerror(-ret));
+		return ret;
+	} else {						
+		ret = wait_for_completion(scq, 1);
+		if (ret)
+			return ret;
+	}
+	
+	return ret;
+}
+
+static int execute_compare_atomic_op(enum fi_op op)
+{
+	int ret;
+
+	ret = fi_compare_atomic(ep, buf, 1, fi_mr_desc(mr), 
+		compare, fi_mr_desc(mr_compare),result, 
+		fi_mr_desc(mr_result), remote.addr, remote.key, 
+		datatype, op, fi_context);
+        if (ret) {
+           	fprintf(stderr, "fi_compare_atomic %d (%s)\n", 
+			ret, fi_strerror(-ret));
+		return ret;
+	} else {			
+		ret = wait_for_completion(scq, 1);
+		if (ret)
+			return ret;
+	}
+	
+	return ret;
 }
 
 static int run_test(void)
 {
 	int ret, i;
-	synchronize();
+	fi_context = (struct fi_context *) malloc(sizeof(struct fi_context));
+	count = (size_t*) malloc(sizeof(size_t));
+	
+	sync_test();
 
 	gettimeofday(&start, NULL);
-	if(run_all)
-	{
-		for(op_type = FI_MIN; op_type <= FI_MSWAP; op_type++)
-		{
-			printf("Atomic operation: %s\n", get_fi_op_name(op_type));
-			for (i = 0; i < iterations; i++) {
-				ret = atomic_op(transfer_size, op_type);
-				if (ret)
-					goto out;
-			}
-		}
-	}
-	else
-	{	
-		for (i = 0; i < iterations; i++) {
-			ret = atomic_op(transfer_size, op_type);
-			if (ret)
+	if(run_all) {  
+	
+		switch(1) {	
+			// atomic operations usable with base atomic and 
+			// fetch atomic functions
+			case FI_MIN:
+        			ret = is_valid_base_atomic_op(FI_MIN);
+        			if (ret > 0) {
+					
+					for (i = 0; i < iterations; i++) {	
+						execute_base_atomic_op(FI_MIN);
+					}
+        			}
+				
+				ret = is_valid_fetch_atomic_op(FI_MIN);
+        			if (ret > 0) {	
+					for (i = 0; i < iterations; i++) {	
+						execute_fetch_atomic_op(FI_MIN);
+					}
+        			}	                                           
+			case FI_MAX:
+        			ret = is_valid_base_atomic_op(FI_MAX);
+        			if (ret > 0) {
+					
+					for (i = 0; i < iterations; i++) {	
+						execute_base_atomic_op(FI_MAX);
+					}
+        			}
+				
+				ret = is_valid_fetch_atomic_op(FI_MAX);
+        			if (ret > 0) {	
+					for (i = 0; i < iterations; i++) {	
+						execute_fetch_atomic_op(FI_MAX);
+					}
+        			}	                                           
+			case FI_SUM:
+        			ret = is_valid_base_atomic_op(FI_SUM);
+        			if (ret > 0) {
+					
+					for (i = 0; i < iterations; i++) {	
+						execute_base_atomic_op(FI_SUM);
+					}
+        			}
+				
+				ret = is_valid_fetch_atomic_op(FI_SUM);
+        			if (ret > 0) {	
+					for (i = 0; i < iterations; i++) {	
+						execute_fetch_atomic_op(FI_SUM);
+					}
+        			}	                                           
+			case FI_PROD:
+        			ret = is_valid_base_atomic_op(FI_PROD);
+        			if (ret > 0) {
+					
+					for (i = 0; i < iterations; i++) {	
+						execute_base_atomic_op(FI_PROD);
+					}
+        			}
+				
+				ret = is_valid_fetch_atomic_op(FI_PROD);
+        			if (ret > 0) {	
+					for (i = 0; i < iterations; i++) {	
+						execute_fetch_atomic_op(FI_PROD);
+					}
+        			}	                                           
+			case FI_LOR:
+        			ret = is_valid_base_atomic_op(FI_LOR);
+        			if (ret > 0) {
+					
+					for (i = 0; i < iterations; i++) {	
+						execute_base_atomic_op(FI_LOR);
+					}
+        			}
+				
+				ret = is_valid_fetch_atomic_op(FI_LOR);
+        			if (ret > 0) {	
+					for (i = 0; i < iterations; i++) {	
+						execute_fetch_atomic_op(FI_LOR);
+					}
+        			}	                                           
+			case FI_LAND:
+        			ret = is_valid_base_atomic_op(FI_LAND);
+        			if (ret > 0) {
+					
+					for (i = 0; i < iterations; i++) {	
+						execute_base_atomic_op(FI_LAND);
+					}
+        			}
+				
+				ret = is_valid_fetch_atomic_op(FI_LAND);
+        			if (ret > 0) {	
+					for (i = 0; i < iterations; i++) {	
+						execute_fetch_atomic_op(FI_LAND);
+					}
+        			}	                                           
+			case FI_BOR:
+        			ret = is_valid_base_atomic_op(FI_BOR);
+        			if (ret > 0) {
+					
+					for (i = 0; i < iterations; i++) {	
+						execute_base_atomic_op(FI_BOR);
+					}
+        			}
+				
+				ret = is_valid_fetch_atomic_op(FI_BOR);
+        			if (ret > 0) {	
+					for (i = 0; i < iterations; i++) {	
+						execute_fetch_atomic_op(FI_BOR);
+					}
+        			}	                                           
+			case FI_BAND:
+        			ret = is_valid_base_atomic_op(FI_BAND);
+        			if (ret > 0) {
+					
+					for (i = 0; i < iterations; i++) {	
+						execute_base_atomic_op(FI_BAND);
+					}
+        			}
+				
+				ret = is_valid_fetch_atomic_op(FI_BAND);
+        			if (ret > 0) {	
+					for (i = 0; i < iterations; i++) {	
+						execute_fetch_atomic_op(FI_BAND);
+					}
+        			}	                                           
+			case FI_LXOR:
+        			ret = is_valid_base_atomic_op(FI_LXOR);
+        			if (ret > 0) {
+					
+					for (i = 0; i < iterations; i++) {	
+						execute_base_atomic_op(FI_LXOR);
+					}
+        			}
+				
+				ret = is_valid_fetch_atomic_op(FI_LXOR);
+        			if (ret > 0) {	
+					for (i = 0; i < iterations; i++) {	
+						execute_fetch_atomic_op(FI_LXOR);
+					}
+        			}	                                           
+			case FI_BXOR:
+        			ret = is_valid_base_atomic_op(FI_BXOR);
+        			if (ret > 0) {
+					
+					for (i = 0; i < iterations; i++) {	
+						execute_base_atomic_op(FI_BXOR);
+					}
+        			}
+				
+				ret = is_valid_fetch_atomic_op(FI_BXOR);
+        			if (ret > 0) {	
+					for (i = 0; i < iterations; i++) {	
+						execute_fetch_atomic_op(FI_BXOR);
+					}
+        			}	                                           
+			case FI_ATOMIC_READ:
+        			ret = is_valid_base_atomic_op(FI_ATOMIC_READ);
+        			if (ret > 0) {
+					
+					for (i = 0; i < iterations; i++) {	
+						execute_base_atomic_op(FI_ATOMIC_READ);
+					}
+        			}
+				
+				ret = is_valid_fetch_atomic_op(FI_ATOMIC_READ);
+        			if (ret > 0) {	
+					for (i = 0; i < iterations; i++) {	
+						execute_fetch_atomic_op(FI_ATOMIC_READ);
+					}
+        			}	                                           
+			case FI_ATOMIC_WRITE:
+        			ret = is_valid_base_atomic_op(FI_ATOMIC_WRITE);
+        			if (ret > 0) {
+					
+					for (i = 0; i < iterations; i++) {	
+						execute_base_atomic_op(FI_ATOMIC_WRITE);
+					}
+        			}
+				
+				ret = is_valid_fetch_atomic_op(FI_ATOMIC_WRITE);
+        			if (ret > 0) {	
+					for (i = 0; i < iterations; i++) {	
+						execute_fetch_atomic_op(FI_ATOMIC_WRITE);
+					}
+        			}	                                           
+			
+			// compare atomic functions 
+			case FI_CSWAP:
+				ret = is_valid_compare_atomic_op(FI_CSWAP);
+        			if (ret > 0) {
+					execute_compare_atomic_op(FI_CSWAP);
+        			}
+			case FI_CSWAP_NE:
+				ret = is_valid_compare_atomic_op(FI_CSWAP_NE);
+        			if (ret > 0) {
+					execute_compare_atomic_op(FI_CSWAP_NE);
+        			}
+			case FI_CSWAP_LE:
+				ret = is_valid_compare_atomic_op(FI_CSWAP_LE);
+        			if (ret > 0) {
+					execute_compare_atomic_op(FI_CSWAP_LE);
+        			}
+			case FI_CSWAP_LT:
+				ret = is_valid_compare_atomic_op(FI_CSWAP_LT);
+        			if (ret > 0) {
+					execute_compare_atomic_op(FI_CSWAP_LT);
+        			}
+			case FI_CSWAP_GE:
+				ret = is_valid_compare_atomic_op(FI_CSWAP_GE);
+        			if (ret > 0) {
+					execute_compare_atomic_op(FI_CSWAP_GE);
+        			}
+			case FI_CSWAP_GT:
+				ret = is_valid_compare_atomic_op(FI_CSWAP_GT);
+        			if (ret > 0) {
+					execute_compare_atomic_op(FI_CSWAP_GT);
+        			}
+			case FI_MSWAP:
+				ret = is_valid_compare_atomic_op(FI_MSWAP);
+        			if (ret > 0) {
+					execute_compare_atomic_op(FI_MSWAP);
+        			}
+				break;
+			default:
 				goto out;
+				break;				
+		}
+	} else {	
+		
+		switch(op_type) {	
+			// atomic operations usable with base atomic and 
+			// fetch atomic functions
+			case FI_MIN:
+			case FI_MAX:
+			case FI_SUM:
+			case FI_PROD:
+			case FI_LOR:
+			case FI_LAND:
+			case FI_BOR:
+			case FI_BAND:
+			case FI_LXOR:
+			case FI_BXOR:
+			case FI_ATOMIC_READ:
+			case FI_ATOMIC_WRITE:
+        			ret = is_valid_base_atomic_op(op_type);
+        			if (ret > 0) {
+					
+					for (i = 0; i < iterations; i++) {	
+						execute_base_atomic_op(op_type);
+					}
+        			}
+				
+				ret = is_valid_fetch_atomic_op(op_type);
+        			if (ret > 0) {	
+					for (i = 0; i < iterations; i++) {	
+						execute_fetch_atomic_op(op_type);
+					}
+        			}	
+      				break;
+                                                                                   
+			// compare atomic functions 
+			case FI_CSWAP:
+			case FI_CSWAP_NE:
+			case FI_CSWAP_LE:
+			case FI_CSWAP_LT:
+			case FI_CSWAP_GE:
+			case FI_CSWAP_GT:
+			case FI_MSWAP:
+				ret = is_valid_compare_atomic_op(op_type);
+        			if (ret > 0) {
+					execute_compare_atomic_op(op_type);
+        			} else {
+					goto out;
+				}
+				break;
+			default:
+				goto out;
+				break;				
 		}
 	}
 	gettimeofday(&end, NULL);
-	synchronize();
+	
+	fprintf(stderr, "%-10s%-8s%-8s%-8s%-8s%8s %10s%13s\n",
+	       "name", "bytes", "xfers", "iters", "total", "time", 
+		"Gb/sec", "usec/xfer");
+
 	show_perf(start, end, transfer_size, iterations, test_name, 0);
 	ret = 0;
 
@@ -464,17 +775,18 @@ static int alloc_ep_res(struct fi_info *fi)
 		goto err2;
 	}
 	
-	// registers local data buffer buff that specifies the first operand of the atomic operation
+	// registers local data buffer buff that specifies 
+	// the first operand of the atomic operation
 	ret = fi_mr_reg(dom, buf, MAX(buffer_size, sizeof(uint64_t)), 
-			FI_REMOTE_READ | FI_REMOTE_WRITE, 0, 0, 0, &mr, NULL);
+		FI_REMOTE_READ | FI_REMOTE_WRITE, 0, 0, 0, &mr, NULL);
 	if (ret) {
 		fprintf(stderr, "fi_mr_reg %s\n", fi_strerror(-ret));
 		goto err3;
 	}
-	
-	// registers local data buffer that stores initial value of the remote buffer
+	// registers local data buffer that stores initial value of 
+	// the remote buffer
 	ret = fi_mr_reg(dom, result, MAX(buffer_size, sizeof(uint64_t)), 
-			FI_REMOTE_READ | FI_REMOTE_WRITE, 0, 0, 0, &mr_result, NULL);
+		FI_REMOTE_READ | FI_REMOTE_WRITE, 0, 0, 0, &mr_result, NULL);
 	if (ret) {
 		fprintf(stderr, "fi_mr_reg %s\n", fi_strerror(-ret));
 		goto err4;
@@ -482,7 +794,7 @@ static int alloc_ep_res(struct fi_info *fi)
 	
 	// registers local data buffer that contains comparison data
 	ret = fi_mr_reg(dom, compare, MAX(buffer_size, sizeof(uint64_t)), 
-			FI_REMOTE_READ | FI_REMOTE_WRITE, 0, 0, 0, &mr_compare, NULL);
+		FI_REMOTE_READ | FI_REMOTE_WRITE, 0, 0, 0, &mr_compare, NULL);
 	if (ret) {
 		fprintf(stderr, "fi_mr_reg %s\n", fi_strerror(-ret));
 		goto err5;
@@ -543,6 +855,10 @@ static int bind_ep_res(void)
 	ret = fi_enable(ep);
 	if (ret)
 		return ret;
+
+	ret = fi_recv(ep, buf, buffer_size, fi_mr_desc(mr), buf);
+	if(ret)
+		fprintf(stderr, "fi_recv %d (%s)\n", ret, fi_strerror(-ret));
 
 	return ret;
 }
@@ -606,7 +922,8 @@ static int server_connect(void)
 
 	rd = fi_eq_condread(cmeq, &entry, sizeof entry, NULL, -1, 0);
 	if (rd != sizeof entry) {
-		fprintf(stderr, "fi_eq_cond_read %zd %s\n", rd, fi_strerror((int) -rd));
+		fprintf(stderr, "fi_eq_cond_read %zd %s\n", 
+			rd, fi_strerror((int) -rd));
 		return (int) rd;
 	}
 
@@ -646,7 +963,8 @@ static int server_connect(void)
 
 	rd = fi_eq_condread(cmeq, &entry, sizeof entry, NULL, -1, 0);
  	if (rd != sizeof entry) {
-		fprintf(stderr, "fi_eq_condread %zd %s\n", rd, fi_strerror((int) -rd));
+		fprintf(stderr, "fi_eq_condread %zd %s\n", 
+			rd, fi_strerror((int) -rd));
 		goto err3;
  	}
 
@@ -797,9 +1115,6 @@ static int run(void)
 			return ret;
 	}
 
-	fprintf(stderr, "%-10s%-8s%-8s%-8s%-8s%8s %10s%13s\n",
-	       "name", "bytes", "xfers", "iters", "total", "time", "Gb/sec", "usec/xfer");
-
 	ret = dst_addr ? client_connect() : server_connect();
 	if (ret)
 		return ret;
@@ -812,7 +1127,8 @@ static int run(void)
 		for (i = 0; i < TEST_CNT; i++) {
 			if (test_size[i].option > size_option)
 				continue;
-			init_test(test_size[i].size, test_name, &transfer_size, &iterations);
+			init_test(test_size[i].size, 
+				test_name, &transfer_size, &iterations);
 			ret = run_test();
 			if(ret)
 				goto out;
@@ -820,8 +1136,7 @@ static int run(void)
 	} else {
 		ret = run_test();
 	}
-	
-	//synchronize();
+	sync_test();
 
 out:
 	fi_shutdown(ep, 0);
@@ -879,7 +1194,6 @@ int main(int argc, char **argv)
 	hints.ep_attr = &ep_hints;
 	hints.type = FI_EP_MSG;
 	hints.ep_cap = FI_MSG | FI_ATOMICS;
-	//hints.ep_cap = FI_MSG | FI_RMA;
 	hints.addr_format = FI_SOCKADDR;
 
 	ret = run();
