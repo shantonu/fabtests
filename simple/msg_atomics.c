@@ -72,7 +72,6 @@ static int size_option;
 static int iterations = 1000;
 static int transfer_size = 1000;
 static int max_credits = 128;
-static int credits = 128;
 static char test_name[10] = "custom";
 static struct timeval start, end;
 static void *buf;
@@ -195,13 +194,14 @@ static enum fi_op get_fi_op(char *op) {
 static int wait_for_completion(struct fid_cq *cq, int num_completions)
 {
 	int ret;
-	struct fi_cq_entry comp;
+	struct fi_cq_entry comp = {0};
 	struct fi_cq_err_entry err;
 	
 	while(num_completions > 0)
 	{
 		ret = fi_cq_read(cq, &comp, sizeof comp);
 		if (ret > 0) {
+			printf("[wait_for_completion][cq_read] %p\n", comp.op_context);
 			num_completions--;
 		} else if (ret < 0) {
 			fi_cq_readerr(cq, &err, sizeof err, 0);
@@ -216,6 +216,7 @@ static int wait_for_completion(struct fid_cq *cq, int num_completions)
 static int send_msg(int size)
 {
 	int ret;
+        printf("[send_msg][fi_send] %p\n", fi_context);
 	
 	ret = fi_send(ep, buf, (size_t) size, fi_mr_desc(mr), fi_context);
 	if (ret){
@@ -229,6 +230,7 @@ static int send_msg(int size)
 static int post_recv(int size)
 {
 	int ret;
+        printf("[post_recv][fi_recv] %p\n", fi_context);
 	
 	ret = fi_recv(ep, buf, buffer_size, fi_mr_desc(mr), fi_context);
 	if (ret){
@@ -241,23 +243,15 @@ static int post_recv(int size)
 
 static int send_xfer(int size)
 {
-        struct fi_cq_entry comp;
         int ret;
 
-        while (!credits) {
-                ret = fi_cq_read(scq, &comp, sizeof comp);
-                if (ret > 0) {
-                        goto post;
-                } else if (ret < 0) {
-                        fprintf(stderr, "Completion queue read %d (%s)\n", 
-			ret, fi_strerror(-ret));
-                        return ret;
-                }
-        }
-
-        credits--;
-post:
-        ret = fi_send(ep, buf, (size_t) size, fi_mr_desc(mr), NULL);
+	if(dst_addr) {
+		*(int *)buf = 1; 
+	} else {
+		*(int *)buf = 0;
+	}
+	printf("sending %d\n", *(int*)buf);
+	ret = fi_send(ep, buf, (size_t) size, fi_mr_desc(mr), fi_context);
         if (ret)
                 fprintf(stderr, "fi_send %d (%s)\n", ret, fi_strerror(-ret));
 
@@ -266,7 +260,7 @@ post:
 
 static int recv_xfer(int size)
 {
-        struct fi_cq_entry comp;
+        struct fi_cq_entry comp = {0};
         int ret;
 
         do {
@@ -277,8 +271,10 @@ static int recv_xfer(int size)
                         return ret;
                 }
         } while (!ret);
+        printf("[recv_xfer][fi_recv] %p\n", fi_context);
+	printf("received %d\n", *(int *)buf);
 
-        ret = fi_recv(ep, buf, buffer_size, fi_mr_desc(mr), buf);
+        ret = fi_recv(ep, buf, buffer_size, fi_mr_desc(mr), fi_context);
         if (ret)
                 fprintf(stderr, "fi_recv %d (%s)\n", ret, fi_strerror(-ret));
 
@@ -288,12 +284,6 @@ static int recv_xfer(int size)
 static int sync_test(void)
 {
         int ret;
-
-        ret = wait_for_completion(scq, max_credits - credits);
-	if(ret)
-		return ret;
-
-        credits = max_credits;
 
 	ret = dst_addr ? send_xfer(16) : recv_xfer(16);
         if (ret)
@@ -344,6 +334,7 @@ static int is_valid_compare_atomic_op(enum fi_op op)
 static int execute_base_atomic_op(enum fi_op op)
 {
 	int ret;
+	printf("[atomic] %p\n", fi_context);
 	
 	ret = fi_atomic(ep, buf, 1, fi_mr_desc(mr), remote.addr, 
 		remote.key, datatype, op, fi_context);
@@ -363,6 +354,7 @@ static int execute_base_atomic_op(enum fi_op op)
 static int execute_fetch_atomic_op(enum fi_op op)
 {
 	int ret;
+	printf("[atomic] %p\n", fi_context);
 	
 	ret = fi_fetch_atomic(ep, buf, 1, fi_mr_desc(mr), result, 
 		fi_mr_desc(mr_result), remote.addr, remote.key, 
@@ -383,6 +375,7 @@ static int execute_fetch_atomic_op(enum fi_op op)
 static int execute_compare_atomic_op(enum fi_op op)
 {
 	int ret;
+	printf("[atomic] %p\n", fi_context);
 
 	ret = fi_compare_atomic(ep, buf, 1, fi_mr_desc(mr), 
 		compare, fi_mr_desc(mr_compare),result, 
@@ -404,7 +397,6 @@ static int execute_compare_atomic_op(enum fi_op op)
 static int run_test(void)
 {
 	int ret, i;
-	fi_context = (struct fi_context *) malloc(sizeof(struct fi_context));
 	count = (size_t*) malloc(sizeof(size_t));
 	
 	sync_test();
@@ -412,7 +404,7 @@ static int run_test(void)
 	gettimeofday(&start, NULL);
 	if(run_all) {  
 	
-		switch(1) {	
+		switch(0) {	
 			// atomic operations usable with base atomic and 
 			// fetch atomic functions
 			case FI_MIN:
@@ -637,6 +629,7 @@ static int run_test(void)
 				goto out;
 				break;				
 		}
+
 	} else {	
 		
 		switch(op_type) {	
@@ -691,7 +684,7 @@ static int run_test(void)
 		}
 	}
 	gettimeofday(&end, NULL);
-	
+		
 	fprintf(stderr, "%-10s%-8s%-8s%-8s%-8s%8s %10s%13s\n",
 	       "name", "bytes", "xfers", "iters", "total", "time", 
 		"Gb/sec", "usec/xfer");
@@ -1108,6 +1101,7 @@ static int exchange_params(void)
 static int run(void)
 {
 	int i, ret = 0;
+	fi_context = (struct fi_context *) malloc(sizeof(struct fi_context));
 
 	if (!dst_addr) {
 		ret = server_listen();
@@ -1135,9 +1129,9 @@ static int run(void)
 		}
 	} else {
 		ret = run_test();
-	}
+	}	
+	
 	sync_test();
-
 out:
 	fi_shutdown(ep, 0);
 	fi_close(&ep->fid);
@@ -1197,5 +1191,7 @@ int main(int argc, char **argv)
 	hints.addr_format = FI_SOCKADDR;
 
 	ret = run();
+	if(ret)
+		printf("Return value 1\n");
 	return ret;
 }
