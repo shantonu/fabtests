@@ -95,12 +95,18 @@ static struct fid_cq *rcq, *scq;
 static struct fid_mr *mr;
 static struct fid_mr *mr_result;
 static struct fid_mr *mr_compare;
-static struct fi_context *fi_context;
+static struct fi_context *fi_context_send;
+static struct fi_context *fi_context_recv;
+static struct fi_context *fi_context_atomic;
 // performing atmics operation on UINT_64 as an example
 static enum fi_datatype datatype = FI_UINT64;
 static size_t *count;
 
 static int run_all = 0;
+
+#define SERVER 10
+#define CLIENT 20
+
 
 void usage(char *name)
 {
@@ -195,16 +201,22 @@ static int wait_for_completion(struct fid_cq *cq, int num_completions)
 {
 	int ret;
 	struct fi_cq_entry comp = {0};
+	//comp.op_context = malloc(sizeof(struct fi_context*));
 	struct fi_cq_err_entry err;
+	struct fi_context *context;
+	//struct fi_context *context = (struct fi_context*) malloc(sizeof(struct fi_context));
+	//context->internal[0] = (int *) malloc(sizeof(int));
 	
 	while(num_completions > 0)
 	{
 		ret = fi_cq_read(cq, &comp, sizeof comp);
 		if (ret > 0) {
-			printf("[wait_for_completion][cq_read] %p\n", comp.op_context);
+			context = (struct fi_context *)comp.op_context;
+			printf("[wait_for_compl][cq_read] %d, %d\n", *(int *)context->internal[0], ret);
 			num_completions--;
 		} else if (ret < 0) {
 			fi_cq_readerr(cq, &err, sizeof err, 0);
+			//printf("cq read error: %s\n", fi_cq_strerror(cq, ret, err.,  ));
 			fprintf(stderr, "Completion queue read %d (%s)\n", 
 			ret, fi_strerror(-ret));
 			return ret;
@@ -213,83 +225,52 @@ static int wait_for_completion(struct fid_cq *cq, int num_completions)
 	return 0;
 }
 
-static int send_msg(int size)
-{
-	int ret;
-        printf("[send_msg][fi_send] %p\n", fi_context);
-	
-	ret = fi_send(ep, buf, (size_t) size, fi_mr_desc(mr), fi_context);
-	if (ret){
-		fprintf(stderr, "fi_send %d (%s)\n", ret, fi_strerror(-ret));
-		return ret;
-	}
-
-	return wait_for_completion(scq, 1);
-}
 
 static int post_recv(int size)
 {
 	int ret;
-        printf("[post_recv][fi_recv] %p\n", fi_context);
+	if(dst_addr) {
+		*(int *)fi_context_recv->internal[0] = CLIENT+1; 
+	} else {
+		*(int *)fi_context_recv->internal[0] = SERVER+1;
+	}
+        printf("[post_recv][fi_recv] %d\n", *(int *)fi_context_recv->internal[0]);
 	
-	ret = fi_recv(ep, buf, buffer_size, fi_mr_desc(mr), fi_context);
+	ret = fi_recv(ep, buf, buffer_size, fi_mr_desc(mr), fi_context_recv);
 	if (ret){
 		fprintf(stderr, "fi_recv %d (%s)\n", ret, fi_strerror(-ret));
 		return ret;
 	}
-
-	return ret;
+	
+	return wait_for_completion(rcq, 1);
 }
 
-static int send_xfer(int size)
+static int send_msg(int size)
 {
         int ret;
 
 	if(dst_addr) {
-		*(int *)buf = 1; 
+		*(int *)fi_context_send->internal[0] = CLIENT; 
 	} else {
-		*(int *)buf = 0;
+		*(int *)fi_context_send->internal[0] = SERVER;
 	}
-	printf("sending %d\n", *(int*)buf);
-	ret = fi_send(ep, buf, (size_t) size, fi_mr_desc(mr), fi_context);
+	printf("[send_xfer][fi_send] %d\n", *(int*)fi_context_send->internal[0]);
+	ret = fi_send(ep, buf, (size_t) size, fi_mr_desc(mr), fi_context_send);
         if (ret)
                 fprintf(stderr, "fi_send %d (%s)\n", ret, fi_strerror(-ret));
 
-        return ret;
-}
-
-static int recv_xfer(int size)
-{
-        struct fi_cq_entry comp = {0};
-        int ret;
-
-        do {
-                ret = fi_cq_read(rcq, &comp, sizeof comp);
-                if (ret < 0) {
-                        fprintf(stderr, "Completion queue read %d (%s)\n", ret, 
-			fi_strerror(-ret));
-                        return ret;
-                }
-        } while (!ret);
-        printf("[recv_xfer][fi_recv] %p\n", fi_context);
-	printf("received %d\n", *(int *)buf);
-
-        ret = fi_recv(ep, buf, buffer_size, fi_mr_desc(mr), fi_context);
-        if (ret)
-                fprintf(stderr, "fi_recv %d (%s)\n", ret, fi_strerror(-ret));
-
-        return ret;
+        return wait_for_completion(scq, 1);
 }
 
 static int sync_test(void)
 {
         int ret;
 
-	ret = dst_addr ? send_xfer(16) : recv_xfer(16);
+	ret = dst_addr ? send_msg(16) : post_recv(16);
         if (ret)
                 return ret;
 
-        return dst_addr ? recv_xfer(16) : send_xfer(16);
+        return dst_addr ? post_recv(16) : send_msg(16);
 }
 
 static int is_valid_base_atomic_op(enum fi_op op)
@@ -334,10 +315,10 @@ static int is_valid_compare_atomic_op(enum fi_op op)
 static int execute_base_atomic_op(enum fi_op op)
 {
 	int ret;
-	printf("[atomic] %p\n", fi_context);
+	//printf("[atomic] %p\n", fi_context);
 	
 	ret = fi_atomic(ep, buf, 1, fi_mr_desc(mr), remote.addr, 
-		remote.key, datatype, op, fi_context);
+		remote.key, datatype, op, fi_context_send);
         if (ret) {		
 		fprintf(stderr, "fi_atomic %d (%s)\n", ret, 
 			fi_strerror(-ret));
@@ -354,11 +335,17 @@ static int execute_base_atomic_op(enum fi_op op)
 static int execute_fetch_atomic_op(enum fi_op op)
 {
 	int ret;
-	printf("[atomic] %p\n", fi_context);
+	if(dst_addr) {
+		*(int *)fi_context_atomic->internal[0] = CLIENT+2; 
+	} else {
+		*(int *)fi_context_atomic->internal[0] = SERVER+2;
+	}
+	
+	printf("[atomic] %d\n", *(int *)fi_context_atomic->internal[0]);
 	
 	ret = fi_fetch_atomic(ep, buf, 1, fi_mr_desc(mr), result, 
 		fi_mr_desc(mr_result), remote.addr, remote.key, 
-		datatype, op, fi_context);
+		datatype, op, fi_context_atomic);
         if (ret) {		
 		fprintf(stderr, "fi_fetch_atomic %d (%s)\n", 
 			ret, fi_strerror(-ret));
@@ -375,12 +362,12 @@ static int execute_fetch_atomic_op(enum fi_op op)
 static int execute_compare_atomic_op(enum fi_op op)
 {
 	int ret;
-	printf("[atomic] %p\n", fi_context);
+	//printf("[atomic] %p\n", fi_context);
 
 	ret = fi_compare_atomic(ep, buf, 1, fi_mr_desc(mr), 
 		compare, fi_mr_desc(mr_compare),result, 
 		fi_mr_desc(mr_result), remote.addr, remote.key, 
-		datatype, op, fi_context);
+		datatype, op, fi_context_send);
         if (ret) {
            	fprintf(stderr, "fi_compare_atomic %d (%s)\n", 
 			ret, fi_strerror(-ret));
@@ -399,6 +386,7 @@ static int run_test(void)
 	int ret, i;
 	count = (size_t*) malloc(sizeof(size_t));
 	
+	printf("Synch before start..............\n");
 	sync_test();
 
 	gettimeofday(&start, NULL);
@@ -725,7 +713,9 @@ static void free_ep_res(void)
 	free(buf);
 	free(result);
 	free(compare);
-	free(fi_context);
+	free(fi_context_send);
+	free(fi_context_recv);
+	free(fi_context_atomic);
 }
 
 static int alloc_ep_res(struct fi_info *fi)
@@ -848,10 +838,10 @@ static int bind_ep_res(void)
 	ret = fi_enable(ep);
 	if (ret)
 		return ret;
-
-	ret = fi_recv(ep, buf, buffer_size, fi_mr_desc(mr), buf);
+	
+	/*ret = post_recv();
 	if(ret)
-		fprintf(stderr, "fi_recv %d (%s)\n", ret, fi_strerror(-ret));
+		ret;*/
 
 	return ret;
 }
@@ -1071,6 +1061,7 @@ err0:
 
 static int exchange_params(void)
 {
+	int ret;
 	int len = sizeof local;
 
 	local.addr = (uint64_t)buf;
@@ -1078,21 +1069,27 @@ static int exchange_params(void)
 
 	if (dst_addr) {
 		*(struct addr_key *)buf = local;
-		send_msg(len);
+		ret = send_msg(len);
+		if(ret)
+			return ret;
 	} else {
-		post_recv(len);
-		wait_for_completion(rcq, 1);
+		ret = post_recv(len);
+		if(ret)
+			return ret;
 		remote = *(struct addr_key *)buf;	
 	}
 
 	if (dst_addr) {
-		post_recv(len);
-		wait_for_completion(rcq, 1);
+		ret = post_recv(len);
+		if(ret)
+			return ret;	
 		remote = *(struct addr_key *)buf;
 
 	} else {
 		*(struct addr_key *)buf = local;
-		send_msg(len);
+		ret = send_msg(len);
+		if(ret)
+			return ret;
 	}
 
 	return 0;
@@ -1101,8 +1098,13 @@ static int exchange_params(void)
 static int run(void)
 {
 	int i, ret = 0;
-	fi_context = (struct fi_context *) malloc(sizeof(struct fi_context));
-
+	fi_context_send = (struct fi_context *) malloc(sizeof(struct fi_context));
+	fi_context_send->internal[0] = (int *) malloc(sizeof(int));
+	fi_context_recv = (struct fi_context *) malloc(sizeof(struct fi_context));
+	fi_context_recv->internal[0] = (int *) malloc(sizeof(int));
+	fi_context_atomic = (struct fi_context *) malloc(sizeof(struct fi_context));
+	fi_context_atomic->internal[0] = (int *) malloc(sizeof(int));
+	//*(int *)(fi_context)->internal[0] = 9;
 	if (!dst_addr) {
 		ret = server_listen();
 		if (ret)
@@ -1130,7 +1132,10 @@ static int run(void)
 	} else {
 		ret = run_test();
 	}	
-	
+	printf("Synch before exit...........\n");
+	/*if(!dst_addr)
+		while(1);*/
+
 	sync_test();
 out:
 	fi_shutdown(ep, 0);
