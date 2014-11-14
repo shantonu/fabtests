@@ -201,22 +201,23 @@ static int wait_for_completion(struct fid_cq *cq, int num_completions)
 {
 	int ret;
 	struct fi_cq_entry comp = {0};
-	//comp.op_context = malloc(sizeof(struct fi_context*));
 	struct fi_cq_err_entry err;
 	struct fi_context *context;
-	//struct fi_context *context = (struct fi_context*) malloc(sizeof(struct fi_context));
-	//context->internal[0] = (int *) malloc(sizeof(int));
 	
 	while(num_completions > 0)
 	{
 		ret = fi_cq_read(cq, &comp, sizeof comp);
 		if (ret > 0) {
-			context = (struct fi_context *)comp.op_context;
-			printf("[wait_for_compl][cq_read] %d, %d\n", *(int *)context->internal[0], ret);
-			num_completions--;
+			if(ret < sizeof(comp)){	
+				printf("Invalid cq entry, retured bytes %d\n", ret);
+				return 1;
+			} else {
+				context = (struct fi_context *)comp.op_context;
+				printf("[wait_for_compl][cq_read] %d, %d\n", *(int *)context->internal[0], ret);
+				num_completions--;
+			}
 		} else if (ret < 0) {
 			fi_cq_readerr(cq, &err, sizeof err, 0);
-			//printf("cq read error: %s\n", fi_cq_strerror(cq, ret, err.,  ));
 			fprintf(stderr, "Completion queue read %d (%s)\n", 
 			ret, fi_strerror(-ret));
 			return ret;
@@ -315,10 +316,16 @@ static int is_valid_compare_atomic_op(enum fi_op op)
 static int execute_base_atomic_op(enum fi_op op)
 {
 	int ret;
-	//printf("[atomic] %p\n", fi_context);
 	
+	if(dst_addr) {
+		*(int *)fi_context_atomic->internal[0] = CLIENT + 2; 
+	} else {
+		*(int *)fi_context_atomic->internal[0] = SERVER + 2;
+	}
+	printf("[base_atomic] %d\n", *(int*)fi_context_atomic->internal[0]);
+	printf("[base_atomic] buf[%p, %p, %lu], remote[%x, %x]\n", buf, fi_mr_desc(mr), sizeof(buf), (unsigned int)remote.addr, (unsigned int)remote.key);
 	ret = fi_atomic(ep, buf, 1, fi_mr_desc(mr), remote.addr, 
-		remote.key, datatype, op, fi_context_send);
+		remote.key, datatype, op, fi_context_atomic);
         if (ret) {		
 		fprintf(stderr, "fi_atomic %d (%s)\n", ret, 
 			fi_strerror(-ret));
@@ -335,14 +342,15 @@ static int execute_base_atomic_op(enum fi_op op)
 static int execute_fetch_atomic_op(enum fi_op op)
 {
 	int ret;
+	
 	if(dst_addr) {
 		*(int *)fi_context_atomic->internal[0] = CLIENT+2; 
 	} else {
 		*(int *)fi_context_atomic->internal[0] = SERVER+2;
 	}
-	
-	printf("[atomic] %d\n", *(int *)fi_context_atomic->internal[0]);
-	
+	printf("[fetch_atomic] %d\n", *(int *)fi_context_atomic->internal[0]);
+	printf("[fetch_atomic] buf[%p, %p, %lu] result[%p, %p, %lu] remote[%x, %x]\n", buf, fi_mr_desc(mr), sizeof(buf), result, fi_mr_desc(mr_result), sizeof(result), (unsigned int)remote.addr, (unsigned int)remote.key);
+
 	ret = fi_fetch_atomic(ep, buf, 1, fi_mr_desc(mr), result, 
 		fi_mr_desc(mr_result), remote.addr, remote.key, 
 		datatype, op, fi_context_atomic);
@@ -361,13 +369,19 @@ static int execute_fetch_atomic_op(enum fi_op op)
 
 static int execute_compare_atomic_op(enum fi_op op)
 {
+	
 	int ret;
-	//printf("[atomic] %p\n", fi_context);
-
+	
+	if(dst_addr) {
+		*(int *)fi_context_atomic->internal[0] = CLIENT + 2; 
+	} else {
+		*(int *)fi_context_atomic->internal[0] = SERVER + 2;
+	}
+	printf("[base_atomic] %d\n", *(int*)fi_context_atomic->internal[0]);
 	ret = fi_compare_atomic(ep, buf, 1, fi_mr_desc(mr), 
 		compare, fi_mr_desc(mr_compare),result, 
 		fi_mr_desc(mr_result), remote.addr, remote.key, 
-		datatype, op, fi_context_send);
+		datatype, op, fi_context_atomic);
         if (ret) {
            	fprintf(stderr, "fi_compare_atomic %d (%s)\n", 
 			ret, fi_strerror(-ret));
@@ -782,7 +796,7 @@ static int alloc_ep_res(struct fi_info *fi)
 		fprintf(stderr, "fi_mr_reg %s\n", fi_strerror(-ret));
 		goto err5;
 	}
-
+	printf("[alloc_ep_res] buf[%p, %p, %lu] result[%p, %p, %lu] \n", buf, fi_mr_desc(mr), sizeof(buf), result, fi_mr_desc(mr_result), sizeof(result));
 	if (!cmeq) {
 		ret = alloc_cm_res();
 		if (ret)
@@ -837,11 +851,7 @@ static int bind_ep_res(void)
 
 	ret = fi_enable(ep);
 	if (ret)
-		return ret;
-	
-	/*ret = post_recv();
-	if(ret)
-		ret;*/
+		return ret;	
 
 	return ret;
 }
@@ -1066,10 +1076,13 @@ static int exchange_params(void)
 
 	local.addr = (uint64_t)buf;
 	local.key = fi_mr_key(mr);
+	printf("[ex_param] local[%x %x]\n", (unsigned int)local.addr, (unsigned int)local.key);
 
 	if (dst_addr) {
 		*(struct addr_key *)buf = local;
 		ret = send_msg(len);
+		struct addr_key temp = *(struct addr_key*)buf;
+		printf("[ex_param][send] buf[%x %x]\n", (unsigned int)temp.addr, (unsigned int)temp.key);
 		if(ret)
 			return ret;
 	} else {
@@ -1077,6 +1090,7 @@ static int exchange_params(void)
 		if(ret)
 			return ret;
 		remote = *(struct addr_key *)buf;	
+		printf("[ex_param][recv] remote[%x %x]\n", (unsigned int)remote.addr, (unsigned int)remote.key);
 	}
 
 	if (dst_addr) {
@@ -1084,10 +1098,13 @@ static int exchange_params(void)
 		if(ret)
 			return ret;	
 		remote = *(struct addr_key *)buf;
+		printf("[ex_param][recv] remote[%x %x]\n", (unsigned int)remote.addr, (unsigned int)remote.key);
 
 	} else {
 		*(struct addr_key *)buf = local;
 		ret = send_msg(len);
+		struct addr_key temp = *(struct addr_key*)buf;
+		printf("[ex_param][send] buf[%x %x]\n", (unsigned int)temp.addr, (unsigned int)temp.key);
 		if(ret)
 			return ret;
 	}
@@ -1100,11 +1117,13 @@ static int run(void)
 	int i, ret = 0;
 	fi_context_send = (struct fi_context *) malloc(sizeof(struct fi_context));
 	fi_context_send->internal[0] = (int *) malloc(sizeof(int));
+	
 	fi_context_recv = (struct fi_context *) malloc(sizeof(struct fi_context));
 	fi_context_recv->internal[0] = (int *) malloc(sizeof(int));
+	
 	fi_context_atomic = (struct fi_context *) malloc(sizeof(struct fi_context));
 	fi_context_atomic->internal[0] = (int *) malloc(sizeof(int));
-	//*(int *)(fi_context)->internal[0] = 9;
+
 	if (!dst_addr) {
 		ret = server_listen();
 		if (ret)
@@ -1119,6 +1138,7 @@ static int run(void)
 	if (ret)
 		return ret;
 
+	//printf("[run] remote[%ld, %ld]\n", remote.addr, remote.key);
 	if (!custom) {
 		for (i = 0; i < TEST_CNT; i++) {
 			if (test_size[i].option > size_option)
@@ -1133,8 +1153,6 @@ static int run(void)
 		ret = run_test();
 	}	
 	printf("Synch before exit...........\n");
-	/*if(!dst_addr)
-		while(1);*/
 
 	sync_test();
 out:
