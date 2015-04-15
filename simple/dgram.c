@@ -273,6 +273,40 @@ static int send_recv()
 		} while (ret == -FI_EAGAIN);
 
 		fprintf(stdout, "Send completion received\n");
+		
+		fprintf(stdout, "Posting a send...\n");
+		sprintf(buf, "MSG dropped!"); 
+
+		//another send
+		ret = fi_send(ep, buf, sizeof("MSG dropped!"), 
+				fi_mr_desc(mr), remote_fi_addr, &fi_ctx_send);
+		if (ret) {
+			FT_PRINTERR("fi_send", ret);
+			return ret;
+		}
+	
+		fprintf(stdout, "Posting a send...\n");
+		sprintf(buf, "MSG re-sent!"); 
+
+		//another send
+		ret = fi_send(ep, buf, sizeof("MSG re-sent!"), 
+				fi_mr_desc(mr), remote_fi_addr, &fi_ctx_send);
+		if (ret) {
+			FT_PRINTERR("fi_send", ret);
+			return ret;
+		}
+
+		/* Read send queue */
+		do {
+			ret = fi_cq_read(scq, &comp, 1);
+			if (ret < 0 && ret != -FI_EAGAIN) {
+				FT_PRINTERR("fi_cq_read", ret);
+				return ret;
+			}
+		} while (ret == -FI_EAGAIN);
+
+		fprintf(stdout, "Send completion received\n");
+
 	} else {
 		/* Server */
 		fprintf(stdout, "Posting a recv...\n");
@@ -283,6 +317,26 @@ static int send_recv()
 			return ret;
 		}
 
+		/* Read recv queue */
+		fprintf(stdout, "Waiting for client...\n");
+		do {
+			ret = fi_cq_read(rcq, &comp, 1);
+			if (ret < 0 && ret != -FI_EAGAIN) {
+				FT_PRINTERR("fi_cq_read", ret);
+				return ret;
+			}
+		} while (ret == -FI_EAGAIN);
+
+		fprintf(stdout, "Received data from client: %s\n", (char *)buf);
+		
+		fprintf(stdout, "Posting a recv...\n");
+		ret = fi_recv(ep, buf, buffer_size, fi_mr_desc(mr), 0, 
+				&fi_ctx_recv);
+		if (ret) {
+			FT_PRINTERR("fi_recv", ret);
+			return ret;
+		}
+		
 		/* Read recv queue */
 		fprintf(stdout, "Waiting for client...\n");
 		do {
