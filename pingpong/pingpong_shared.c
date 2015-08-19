@@ -42,7 +42,6 @@
 #include "shared.h"
 #include "pingpong_shared.h"
 
-fi_addr_t remote_fi_addr;
 int verify_data;
 int timeout;
 

@@ -42,7 +42,6 @@ extern "C" {
 
 #define PONG_OPTS "vP"
 
-extern fi_addr_t remote_fi_addr;
 extern int verify_data;
 extern int timeout;
 
