@@ -114,7 +114,7 @@ int send_xfer(int size)
 		ft_fill_buf((char *) tx_buf + fi->ep_attr->msg_prefix_size, size);
 
 	ret = fi_send(ep, tx_buf, (size_t) size + fi->ep_attr->msg_prefix_size,
-			fi_mr_desc(mr), remote_fi_addr, NULL);
+			fi_mr_desc(mr), remote_fi_addr, &tx_ctx);
 	if (ret)
 		FT_PRINTERR("fi_send", ret);
 
@@ -127,7 +127,7 @@ int send_msg(int size)
 
 	/* TODO: Prefix mode may differ for send/recv */
 	ret = fi_send(ep, tx_buf, (size_t) size + fi->ep_attr->msg_prefix_size,
-			fi_mr_desc(mr), remote_fi_addr, NULL);
+			fi_mr_desc(mr), remote_fi_addr, &tx_ctx);
 	if (ret) {
 		FT_PRINTERR("fi_send", ret);
 		return ret;
@@ -159,7 +159,7 @@ int recv_xfer(int size, bool enable_timeout)
 	}
 
 	ret = fi_recv(ep, rx_buf, rx_size, fi_mr_desc(mr), remote_fi_addr,
-			NULL);
+			&rx_ctx);
 	if (ret)
 		FT_PRINTERR("fi_recv", ret);
 
@@ -170,7 +170,7 @@ int recv_msg(int size, bool enable_timeout)
 {
 	int ret;
 
-	ret = fi_recv(ep, rx_buf, rx_size, fi_mr_desc(mr), 0, NULL);
+	ret = fi_recv(ep, rx_buf, rx_size, fi_mr_desc(mr), 0, &rx_ctx);
 	if (ret) {
 		FT_PRINTERR("fi_recv", ret);
 		return ret;
