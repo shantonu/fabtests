@@ -92,6 +92,7 @@ struct ft_opts {
 	char *dst_port;
 	char *src_addr;
 	char *dst_addr;
+	char *av_name;
 	int size_option;
 	int options;
 	enum ft_comp_method comp_method;

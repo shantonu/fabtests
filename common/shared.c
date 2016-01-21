@@ -314,6 +314,9 @@ int ft_alloc_active_res(struct fi_info *fi)
 		if (fi->domain_attr->av_type != FI_AV_UNSPEC)
 			av_attr.type = fi->domain_attr->av_type;
 
+		if (opts.av_name) {
+			av_attr.name = opts.av_name;
+		}
 		ret = fi_av_open(domain, &av_attr, &av, NULL);
 		if (ret) {
 			FT_PRINTERR("fi_av_open", ret);
