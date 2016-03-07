@@ -71,7 +71,8 @@ extern const unsigned int med_size_cnt;
 extern const unsigned int lg_size_cnt;
 
 struct ft_xcontrol {
-	struct fid_ep		*ep;
+	/* Removing for now, later might be needed for scalable ep */
+	//struct fid_ep		*ep;
 	void			*buf;
 	struct fid_mr		*mr;
 	void			*memdesc;

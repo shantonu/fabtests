@@ -42,7 +42,7 @@ static int ft_post_recv(void)
 	case FT_FUNC_SENDV:
 		ft_format_iov(ft_rx_ctrl.iov, ft_ctrl.iov_array[ft_rx_ctrl.iov_iter],
 				ft_rx_ctrl.buf, ft_rx_ctrl.msg_size);
-		ret = fi_recvv(ft_rx_ctrl.ep, ft_rx_ctrl.iov, ft_rx_ctrl.iov_desc,
+		ret = fi_recvv(ep, ft_rx_ctrl.iov, ft_rx_ctrl.iov_desc,
 				ft_ctrl.iov_array[ft_rx_ctrl.iov_iter], ft_rx_ctrl.addr, NULL);
 		ft_next_iov_cnt(&ft_rx_ctrl, fabric_info->rx_attr->iov_limit);
 		break;
@@ -55,11 +55,11 @@ static int ft_post_recv(void)
 		msg.addr = ft_rx_ctrl.addr;
 		msg.context = NULL;
 		msg.data = 0;
-		ret = fi_recvmsg(ft_rx_ctrl.ep, &msg, 0);
+		ret = fi_recvmsg(ep, &msg, 0);
 		ft_next_iov_cnt(&ft_rx_ctrl, fabric_info->rx_attr->iov_limit);
 		break;
 	default:
-		ret = fi_recv(ft_rx_ctrl.ep, ft_rx_ctrl.buf, ft_rx_ctrl.msg_size,
+		ret = fi_recv(ep, ft_rx_ctrl.buf, ft_rx_ctrl.msg_size,
 				ft_rx_ctrl.memdesc, ft_rx_ctrl.addr, NULL);
 		break;
 	}
@@ -76,7 +76,7 @@ static int ft_post_trecv(void)
 	case FT_FUNC_SENDV:
 		ft_format_iov(ft_rx_ctrl.iov, ft_ctrl.iov_array[ft_rx_ctrl.iov_iter],
 				ft_rx_ctrl.buf, ft_rx_ctrl.msg_size);
-		ret = fi_trecvv(ft_rx_ctrl.ep, ft_rx_ctrl.iov, ft_rx_ctrl.iov_desc,
+		ret = fi_trecvv(ep, ft_rx_ctrl.iov, ft_rx_ctrl.iov_desc,
 				ft_ctrl.iov_array[ft_rx_ctrl.iov_iter], ft_rx_ctrl.addr,
 				ft_rx_ctrl.tag, 0, NULL);
 		ft_next_iov_cnt(&ft_rx_ctrl, fabric_info->rx_attr->iov_limit);
@@ -91,11 +91,11 @@ static int ft_post_trecv(void)
 		msg.tag = ft_rx_ctrl.tag;
 		msg.ignore = 0;
 		msg.context = NULL;
-		ret = fi_trecvmsg(ft_rx_ctrl.ep, &msg, 0);
+		ret = fi_trecvmsg(ep, &msg, 0);
 		ft_next_iov_cnt(&ft_rx_ctrl, fabric_info->rx_attr->iov_limit);
 		break;
 	default:
-		ret = fi_trecv(ft_rx_ctrl.ep, ft_rx_ctrl.buf, ft_rx_ctrl.msg_size,
+		ret = fi_trecv(ep, ft_rx_ctrl.buf, ft_rx_ctrl.msg_size,
 				ft_rx_ctrl.memdesc, ft_rx_ctrl.addr, ft_rx_ctrl.tag, 0, NULL);
 		break;
 	}
@@ -118,7 +118,7 @@ static int ft_post_send(void)
 	case FT_FUNC_SENDV:
 		ft_format_iov(ft_tx_ctrl.iov, ft_ctrl.iov_array[ft_tx_ctrl.iov_iter],
 				ft_tx_ctrl.buf, ft_tx_ctrl.msg_size);
-		ft_send_retry(ret, fi_sendv, ft_tx_ctrl.ep, ft_tx_ctrl.iov,
+		ft_send_retry(ret, fi_sendv, ep, ft_tx_ctrl.iov,
 				ft_tx_ctrl.iov_desc, ft_ctrl.iov_array[ft_tx_ctrl.iov_iter],
 				ft_tx_ctrl.addr, NULL);
 		ft_next_iov_cnt(&ft_tx_ctrl, fabric_info->tx_attr->iov_limit);
@@ -133,21 +133,21 @@ static int ft_post_send(void)
 		msg.addr = ft_tx_ctrl.addr;
 		msg.context = NULL;
 		msg.data = 0;
-		ft_send_retry(ret, fi_sendmsg, ft_tx_ctrl.ep, &msg, 0);
+		ft_send_retry(ret, fi_sendmsg, ep, &msg, 0);
 		ft_next_iov_cnt(&ft_tx_ctrl, fabric_info->tx_attr->iov_limit);
 		ft_tx_ctrl.credits--;
 		break;
 	case FT_FUNC_INJECT:
-		ft_send_retry(ret, fi_inject, ft_tx_ctrl.ep, ft_tx_ctrl.buf,
+		ft_send_retry(ret, fi_inject, ep, ft_tx_ctrl.buf,
 				ft_tx_ctrl.msg_size, ft_tx_ctrl.addr);
 		break;
 	case FT_FUNC_INJECTDATA:
-		ft_send_retry(ret, fi_injectdata, ft_tx_ctrl.ep, ft_tx_ctrl.buf,
+		ft_send_retry(ret, fi_injectdata, ep, ft_tx_ctrl.buf,
 				ft_tx_ctrl.msg_size, ft_tx_ctrl.remote_cq_data,
 				ft_tx_ctrl.addr);
 		break;
 	default:
-		ft_send_retry(ret, fi_send, ft_tx_ctrl.ep, ft_tx_ctrl.buf,
+		ft_send_retry(ret, fi_send, ep, ft_tx_ctrl.buf,
 				ft_tx_ctrl.msg_size, ft_tx_ctrl.memdesc,
 				ft_tx_ctrl.addr, NULL);
 		ft_tx_ctrl.credits--;
@@ -166,7 +166,7 @@ static int ft_post_tsend(void)
 	case FT_FUNC_SENDV:
 		ft_format_iov(ft_tx_ctrl.iov, ft_ctrl.iov_array[ft_tx_ctrl.iov_iter],
 				ft_tx_ctrl.buf, ft_tx_ctrl.msg_size);
-		ft_send_retry(ret, fi_tsendv, ft_tx_ctrl.ep, ft_tx_ctrl.iov,
+		ft_send_retry(ret, fi_tsendv, ep, ft_tx_ctrl.iov,
 				ft_tx_ctrl.iov_desc, ft_ctrl.iov_array[ft_tx_ctrl.iov_iter],
 				ft_tx_ctrl.addr, ft_tx_ctrl.tag, NULL);
 		ft_next_iov_cnt(&ft_tx_ctrl, fabric_info->tx_attr->iov_limit);
@@ -182,21 +182,21 @@ static int ft_post_tsend(void)
 		msg.tag = ft_tx_ctrl.tag;
 		msg.context = NULL;
 		msg.data = 0;
-		ft_send_retry(ret, fi_tsendmsg, ft_tx_ctrl.ep, &msg, 0);
+		ft_send_retry(ret, fi_tsendmsg, ep, &msg, 0);
 		ft_next_iov_cnt(&ft_tx_ctrl, fabric_info->tx_attr->iov_limit);
 		ft_tx_ctrl.credits--;
 		break;
 	case FT_FUNC_INJECT:
-		ft_send_retry(ret, fi_tinject, ft_tx_ctrl.ep, ft_tx_ctrl.buf,
+		ft_send_retry(ret, fi_tinject, ep, ft_tx_ctrl.buf,
 				ft_tx_ctrl.msg_size, ft_tx_ctrl.addr, ft_tx_ctrl.tag);
 		break;
 	case FT_FUNC_INJECTDATA:
-		ft_send_retry(ret, fi_tinjectdata, ft_tx_ctrl.ep, ft_tx_ctrl.buf,
+		ft_send_retry(ret, fi_tinjectdata, ep, ft_tx_ctrl.buf,
 				ft_tx_ctrl.msg_size, ft_tx_ctrl.remote_cq_data,
 				ft_tx_ctrl.addr, ft_tx_ctrl.tag);
 		break;
 	default:
-		ft_send_retry(ret, fi_tsend, ft_tx_ctrl.ep, ft_tx_ctrl.buf,
+		ft_send_retry(ret, fi_tsend, ep, ft_tx_ctrl.buf,
 				ft_tx_ctrl.msg_size, ft_tx_ctrl.memdesc,
 				ft_tx_ctrl.addr, ft_tx_ctrl.tag, NULL);
 		ft_tx_ctrl.credits--;

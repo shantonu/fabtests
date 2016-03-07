@@ -85,9 +85,6 @@ int ft_open_active(void)
 		return ret;
 	}
 
-	ft_rx_ctrl.ep = ep;
-	ft_tx_ctrl.ep = ep;
-
 	ret = fi_ep_bind(ep, &eq->fid, 0);
 	if (ret) {
 		FT_PRINTERR("fi_ep_bind", ret);
