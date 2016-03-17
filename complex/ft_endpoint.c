@@ -130,8 +130,8 @@ int ft_reset_ep(void)
 			return ret;
 	}
 
-	memset(ft_tx_ctrl.buf, 0, ft_tx_ctrl.msg_size);
-	memset(ft_rx_ctrl.buf, 0, ft_rx_ctrl.msg_size);
+	memset(tx_buf, 0, tx_size);
+	memset(rx_buf, 0, rx_size);
 	ft_tx_ctrl.seqno = 0;
 	ft_rx_ctrl.seqno = 0;
 

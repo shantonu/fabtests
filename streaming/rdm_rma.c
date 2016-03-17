@@ -65,13 +65,13 @@ static int run_test(void)
 	for (i = 0; i < opts.iterations; i++) {
 		switch (op_type) {
 		case FT_RMA_WRITE:
-			ret = fi_write(ep, buf, opts.transfer_size, fi_mr_desc(mr),
+			ret = fi_write(ep, rx_buf, opts.transfer_size, fi_mr_desc(rx_mr),
 				       remote_fi_addr, remote.addr, remote.key, ep);
 			if (ret)
 				FT_PRINTERR("fi_write", ret);
 			break;
 		case FT_RMA_WRITEDATA:
-			ret = fi_writedata(ep, buf, opts.transfer_size, fi_mr_desc(mr),
+			ret = fi_writedata(ep, rx_buf, opts.transfer_size, fi_mr_desc(rx_mr),
 				       cq_data, remote_fi_addr, remote.addr, remote.key, ep);
 			if (ret) {
 				FT_PRINTERR("fi_writedata", ret);
@@ -81,7 +81,7 @@ static int run_test(void)
 			ret = ft_rx(0);
 			break;
 		case FT_RMA_READ:
-			ret = fi_read(ep, buf, opts.transfer_size, fi_mr_desc(mr),
+			ret = fi_read(ep, rx_buf, opts.transfer_size, fi_mr_desc(rx_mr),
 				      remote_fi_addr, remote.addr, remote.key, ep);
 			if (ret)
 				FT_PRINTERR("fi_read", ret);

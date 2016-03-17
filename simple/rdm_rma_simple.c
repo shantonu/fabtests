@@ -94,12 +94,12 @@ static int run_test(void)
 		return ret;
 	if (opts.dst_addr) {
 		fprintf(stdout, "RMA write to server\n");
-		if (snprintf(tx_buf, tx_size, "%s", message) >= tx_size) {
+		if (snprintf(rx_buf, rx_size, "%s", message) >= rx_size) {
                         fprintf(stderr, "Transmit buffer too small.\n");
                         return -FI_ETOOSMALL;
                 }
-		ret = fi_write(ep, tx_buf, message_len, fi_mr_desc(mr),
-				remote_fi_addr, 0, FT_MR_KEY, &fi_ctx_write);
+		ret = fi_write(ep, rx_buf, message_len, fi_mr_desc(rx_mr),
+				remote_fi_addr, 0, rx_mr_key, &fi_ctx_write);
 		if (ret)
 			return ret;
 

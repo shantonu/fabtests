@@ -183,7 +183,7 @@ static int execute_base_atomic_op(enum fi_op op)
 {
 	int ret;
 
-	ret = fi_atomic(ep, buf, 1, fi_mr_desc(mr), remote_fi_addr, remote.addr,
+	ret = fi_atomic(ep, rx_buf, 1, fi_mr_desc(rx_mr), remote_fi_addr, remote.addr,
 		       	remote.key, datatype, op, &fi_ctx_atomic);
 	if (ret) {
 		FT_PRINTERR("fi_atomic", ret);
@@ -198,7 +198,7 @@ static int execute_fetch_atomic_op(enum fi_op op)
 {
 	int ret;
 
-	ret = fi_fetch_atomic(ep, buf, 1, fi_mr_desc(mr), result,
+	ret = fi_fetch_atomic(ep, rx_buf, 1, fi_mr_desc(rx_mr), result,
 			fi_mr_desc(mr_result), remote_fi_addr, remote.addr,
 			remote.key, datatype, op, &fi_ctx_atomic);
 	if (ret) {
@@ -214,7 +214,7 @@ static int execute_compare_atomic_op(enum fi_op op)
 {
 	int ret;
 
-	ret = fi_compare_atomic(ep, buf, 1, fi_mr_desc(mr), compare,
+	ret = fi_compare_atomic(ep, rx_buf, 1, fi_mr_desc(rx_mr), compare,
 			fi_mr_desc(mr_compare), result, fi_mr_desc(mr_result),
 			remote_fi_addr, remote.addr, remote.key, datatype, op,
 			&fi_ctx_atomic);
@@ -362,6 +362,7 @@ static int run_test(void)
 
 static void free_res(void)
 {
+	FT_CLOSE_FID(rx_mr);
 	FT_CLOSE_FID(mr_result);
 	FT_CLOSE_FID(mr_compare);
 	if (result) {
@@ -372,14 +373,6 @@ static void free_res(void)
 		free(compare);
 		compare = NULL;
 	}
-}
-
-static uint64_t get_mr_key()
-{
-	static uint64_t user_key = FT_MR_KEY;
-
-	return fi->domain_attr->mr_mode == FI_MR_SCALABLE ?
-		user_key++ : 0;
 }
 
 static int alloc_ep_res(struct fi_info *fi)
@@ -393,13 +386,13 @@ static int alloc_ep_res(struct fi_info *fi)
 	if (ret)
 		return ret;
 
-	result = malloc(buf_size);
+	result = malloc(rx_size);
 	if (!result) {
 		perror("malloc");
 		return -1;
 	}
 
-	compare = malloc(buf_size);
+	compare = malloc(rx_size);
 	if (!compare) {
 		perror("malloc");
 		return -1;
@@ -407,9 +400,9 @@ static int alloc_ep_res(struct fi_info *fi)
 
 	// registers local data buffer buff that specifies
 	// the first operand of the atomic operation
-	ret = fi_mr_reg(domain, buf, buf_size,
+	ret = fi_mr_reg(domain, rx_buf, rx_size,
 		FI_REMOTE_READ | FI_REMOTE_WRITE, 0,
-		get_mr_key(), 0, &mr, NULL);
+		get_mr_key(fi->domain_attr), 0, &rx_mr, NULL);
 	if (ret) {
 		FT_PRINTERR("fi_mr_reg", ret);
 		return ret;
@@ -417,18 +410,18 @@ static int alloc_ep_res(struct fi_info *fi)
 
 	// registers local data buffer that stores initial value of
 	// the remote buffer
-	ret = fi_mr_reg(domain, result, buf_size,
+	ret = fi_mr_reg(domain, result, rx_size,
 		FI_REMOTE_READ | FI_REMOTE_WRITE, 0,
-		get_mr_key(), 0, &mr_result, NULL);
+		get_mr_key(fi->domain_attr), 0, &mr_result, NULL);
 	if (ret) {
 		FT_PRINTERR("fi_mr_reg", -ret);
 		return ret;
 	}
 
 	// registers local data buffer that contains comparison data
-	ret = fi_mr_reg(domain, compare, buf_size,
+	ret = fi_mr_reg(domain, compare, rx_size,
 		FI_REMOTE_READ | FI_REMOTE_WRITE, 0,
-		get_mr_key(), 0, &mr_compare, NULL);
+		get_mr_key(fi->domain_attr), 0, &mr_compare, NULL);
 	if (ret) {
 		FT_PRINTERR("fi_mr_reg", ret);
 		return ret;

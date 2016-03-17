@@ -105,7 +105,7 @@ static int create_messages(struct cma_node *node)
 
 	if (fi->mode & FI_LOCAL_MR) {
 		ret = fi_mr_reg(node->domain, node->mem, hints->ep_attr->max_msg_size,
-				FI_SEND | FI_RECV, 0, 0, 0, &node->mr, NULL);
+				FI_SEND | FI_RECV, 0, get_mr_key(fi->domain_attr), 0, &node->mr, NULL);
 		if (ret) {
 			FT_PRINTERR("fi_reg_mr", ret);
 			goto err;

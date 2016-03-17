@@ -53,7 +53,7 @@ static int send_msg(int size)
 {
 	int ret;
 
-	ret = fi_send(ep_array[0], buf, (size_t) size, fi_mr_desc(mr),
+	ret = fi_send(ep_array[0], tx_buf, (size_t) size, fi_mr_desc(tx_mr),
 			addr_array[0], &tx_ctx);
 	if (ret) {
 		FT_PRINTERR("fi_send", ret);
@@ -68,7 +68,7 @@ static int recv_msg(void)
 {
 	int ret;
 
-	ret = fi_recv(srx_ctx, buf, rx_size, fi_mr_desc(mr), 0, &rx_ctx);
+	ret = fi_recv(srx_ctx, rx_buf, rx_size, fi_mr_desc(rx_mr), 0, &rx_ctx);
 	if (ret) {
 		FT_PRINTERR("fi_recv", ret);
 		return ret;
@@ -182,7 +182,7 @@ static int run_test()
 	/* Post recvs */
 	for (i = 0; i < ep_cnt; i++) {
 		fprintf(stdout, "Posting recv for ctx: %d\n", i);
-		ret = fi_recv(srx_ctx, rx_buf, rx_size, fi_mr_desc(mr),
+		ret = fi_recv(srx_ctx, rx_buf, rx_size, fi_mr_desc(rx_mr),
 				FI_ADDR_UNSPEC, NULL);
 		if (ret) {
 			FT_PRINTERR("fi_recv", ret);
@@ -195,7 +195,7 @@ static int run_test()
 		/* Post sends addressed to remote EPs */
 		for (i = 0; i < ep_cnt; i++) {
 			fprintf(stdout, "Posting send to remote ctx: %d\n", i);
-			ret = fi_send(ep_array[i], tx_buf, tx_size, fi_mr_desc(mr),
+			ret = fi_send(ep_array[i], tx_buf, tx_size, fi_mr_desc(tx_mr),
 					addr_array[i], NULL);
 			if (ret) {
 				FT_PRINTERR("fi_send", ret);
@@ -217,7 +217,7 @@ static int run_test()
 		/* Post sends addressed to remote EPs */
 		for (i = 0; i < ep_cnt; i++) {
 			fprintf(stdout, "Posting send to remote ctx: %d\n", i);
-			ret = fi_send(ep_array[i], tx_buf, tx_size, fi_mr_desc(mr),
+			ret = fi_send(ep_array[i], tx_buf, tx_size, fi_mr_desc(tx_mr),
 					addr_array[i], NULL);
 			if (ret) {
 				FT_PRINTERR("fi_send", ret);
@@ -278,7 +278,7 @@ static int init_fabric(void)
 		return ret;
 
 	/* Post recv */
-	ret = fi_recv(srx_ctx, buf, rx_size, fi_mr_desc(mr), 0, &rx_ctx);
+	ret = fi_recv(srx_ctx, rx_buf, rx_size, fi_mr_desc(rx_mr), 0, &rx_ctx);
 	if (ret) {
 		FT_PRINTERR("fi_recv", ret);
 		return ret;
@@ -322,8 +322,8 @@ static int init_av(void)
 			return ret;
 
 		/* Send local EP addresses to one of the remote endpoints */
-		memcpy(buf, &addrlen, sizeof(size_t));
-		memcpy(buf + sizeof(size_t), local_addr, addrlen * ep_cnt);
+		memcpy(tx_buf, &addrlen, sizeof(size_t));
+		memcpy(tx_buf + sizeof(size_t), local_addr, addrlen * ep_cnt);
 		ret = send_msg(sizeof(size_t) + addrlen * ep_cnt);
 		if (ret)
 			return ret;
@@ -333,8 +333,8 @@ static int init_av(void)
 		if (ret)
 			return ret;
 
-		memcpy(&addrlen, buf, sizeof(size_t));
-		memcpy(remote_addr, buf + sizeof(size_t), addrlen * ep_cnt);
+		memcpy(&addrlen, rx_buf, sizeof(size_t));
+		memcpy(remote_addr, rx_buf + sizeof(size_t), addrlen * ep_cnt);
 
 		/* Insert remote addresses into AV
 		 * Skip the first address since we already have it in AV */
@@ -354,9 +354,9 @@ static int init_av(void)
 		if (ret)
 			return ret;
 
-		memcpy(&addrlen, buf, sizeof(size_t));
+		memcpy(&addrlen, rx_buf, sizeof(size_t));
 		remote_addr = malloc(addrlen * ep_cnt);
-		memcpy(remote_addr, buf + sizeof(size_t), addrlen * ep_cnt);
+		memcpy(remote_addr, rx_buf + sizeof(size_t), addrlen * ep_cnt);
 
 		/* Insert remote addresses into AV */
 		ret = ft_av_insert(av, remote_addr, ep_cnt, addr_array, 0, NULL);
@@ -364,8 +364,8 @@ static int init_av(void)
 			return ret;
 
 		/* Send local EP addresses to one of the remote endpoints */
-		memcpy(buf, &addrlen, sizeof(size_t));
-		memcpy(buf + sizeof(size_t), local_addr, addrlen * ep_cnt);
+		memcpy(tx_buf, &addrlen, sizeof(size_t));
+		memcpy(tx_buf + sizeof(size_t), local_addr, addrlen * ep_cnt);
 		ret = send_msg(sizeof(size_t) + addrlen * ep_cnt);
 		if (ret)
 			return ret;

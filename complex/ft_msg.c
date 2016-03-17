@@ -41,14 +41,14 @@ static int ft_post_recv(void)
 	switch (test_info.class_function) {
 	case FT_FUNC_SENDV:
 		ft_format_iov(ft_rx_ctrl.iov, ft_ctrl.iov_array[ft_rx_ctrl.iov_iter],
-				ft_rx_ctrl.buf, ft_rx_ctrl.msg_size);
+				rx_buf, rx_size);
 		ret = fi_recvv(ep, ft_rx_ctrl.iov, ft_rx_ctrl.iov_desc,
 				ft_ctrl.iov_array[ft_rx_ctrl.iov_iter], ft_rx_ctrl.addr, NULL);
 		ft_next_iov_cnt(&ft_rx_ctrl, fabric_info->rx_attr->iov_limit);
 		break;
 	case FT_FUNC_SENDMSG:
 		ft_format_iov(ft_rx_ctrl.iov, ft_ctrl.iov_array[ft_rx_ctrl.iov_iter],
-				ft_rx_ctrl.buf, ft_rx_ctrl.msg_size);
+				rx_buf, rx_size);
 		msg.msg_iov = ft_rx_ctrl.iov;
 		msg.desc = ft_rx_ctrl.iov_desc;
 		msg.iov_count = ft_ctrl.iov_array[ft_rx_ctrl.iov_iter];
@@ -59,7 +59,7 @@ static int ft_post_recv(void)
 		ft_next_iov_cnt(&ft_rx_ctrl, fabric_info->rx_attr->iov_limit);
 		break;
 	default:
-		ret = fi_recv(ep, ft_rx_ctrl.buf, ft_rx_ctrl.msg_size,
+		ret = fi_recv(ep, rx_buf, rx_size,
 				ft_rx_ctrl.memdesc, ft_rx_ctrl.addr, NULL);
 		break;
 	}
@@ -75,7 +75,7 @@ static int ft_post_trecv(void)
 	switch (test_info.class_function) {
 	case FT_FUNC_SENDV:
 		ft_format_iov(ft_rx_ctrl.iov, ft_ctrl.iov_array[ft_rx_ctrl.iov_iter],
-				ft_rx_ctrl.buf, ft_rx_ctrl.msg_size);
+				rx_buf, rx_size);
 		ret = fi_trecvv(ep, ft_rx_ctrl.iov, ft_rx_ctrl.iov_desc,
 				ft_ctrl.iov_array[ft_rx_ctrl.iov_iter], ft_rx_ctrl.addr,
 				ft_rx_ctrl.tag, 0, NULL);
@@ -83,7 +83,7 @@ static int ft_post_trecv(void)
 		break;
 	case FT_FUNC_SENDMSG:
 		ft_format_iov(ft_rx_ctrl.iov, ft_ctrl.iov_array[ft_rx_ctrl.iov_iter],
-				ft_rx_ctrl.buf, ft_rx_ctrl.msg_size);
+				rx_buf, rx_size);
 		msg.msg_iov = ft_rx_ctrl.iov;
 		msg.desc = ft_rx_ctrl.iov_desc;
 		msg.iov_count = ft_ctrl.iov_array[ft_rx_ctrl.iov_iter];
@@ -95,7 +95,7 @@ static int ft_post_trecv(void)
 		ft_next_iov_cnt(&ft_rx_ctrl, fabric_info->rx_attr->iov_limit);
 		break;
 	default:
-		ret = fi_trecv(ep, ft_rx_ctrl.buf, ft_rx_ctrl.msg_size,
+		ret = fi_trecv(ep, rx_buf, rx_size,
 				ft_rx_ctrl.memdesc, ft_rx_ctrl.addr, ft_rx_ctrl.tag, 0, NULL);
 		break;
 	}
@@ -117,7 +117,7 @@ static int ft_post_send(void)
 	switch (test_info.class_function) {
 	case FT_FUNC_SENDV:
 		ft_format_iov(ft_tx_ctrl.iov, ft_ctrl.iov_array[ft_tx_ctrl.iov_iter],
-				ft_tx_ctrl.buf, ft_tx_ctrl.msg_size);
+				tx_buf, tx_size);
 		ft_send_retry(ret, fi_sendv, ep, ft_tx_ctrl.iov,
 				ft_tx_ctrl.iov_desc, ft_ctrl.iov_array[ft_tx_ctrl.iov_iter],
 				ft_tx_ctrl.addr, NULL);
@@ -126,7 +126,7 @@ static int ft_post_send(void)
 		break;
 	case FT_FUNC_SENDMSG:
 		ft_format_iov(ft_tx_ctrl.iov, ft_ctrl.iov_array[ft_tx_ctrl.iov_iter],
-				ft_tx_ctrl.buf, ft_tx_ctrl.msg_size);
+				tx_buf, tx_size);
 		msg.msg_iov = ft_tx_ctrl.iov;
 		msg.desc = ft_tx_ctrl.iov_desc;
 		msg.iov_count = ft_ctrl.iov_array[ft_tx_ctrl.iov_iter];
@@ -138,17 +138,17 @@ static int ft_post_send(void)
 		ft_tx_ctrl.credits--;
 		break;
 	case FT_FUNC_INJECT:
-		ft_send_retry(ret, fi_inject, ep, ft_tx_ctrl.buf,
-				ft_tx_ctrl.msg_size, ft_tx_ctrl.addr);
+		ft_send_retry(ret, fi_inject, ep, tx_buf,
+				tx_size, ft_tx_ctrl.addr);
 		break;
 	case FT_FUNC_INJECTDATA:
-		ft_send_retry(ret, fi_injectdata, ep, ft_tx_ctrl.buf,
-				ft_tx_ctrl.msg_size, ft_tx_ctrl.remote_cq_data,
+		ft_send_retry(ret, fi_injectdata, ep, tx_buf,
+				tx_size, ft_tx_ctrl.remote_cq_data,
 				ft_tx_ctrl.addr);
 		break;
 	default:
-		ft_send_retry(ret, fi_send, ep, ft_tx_ctrl.buf,
-				ft_tx_ctrl.msg_size, ft_tx_ctrl.memdesc,
+		ft_send_retry(ret, fi_send, ep, tx_buf,
+				tx_size, ft_tx_ctrl.memdesc,
 				ft_tx_ctrl.addr, NULL);
 		ft_tx_ctrl.credits--;
 		break;
@@ -165,7 +165,7 @@ static int ft_post_tsend(void)
 	switch (test_info.class_function) {
 	case FT_FUNC_SENDV:
 		ft_format_iov(ft_tx_ctrl.iov, ft_ctrl.iov_array[ft_tx_ctrl.iov_iter],
-				ft_tx_ctrl.buf, ft_tx_ctrl.msg_size);
+				tx_buf, tx_size);
 		ft_send_retry(ret, fi_tsendv, ep, ft_tx_ctrl.iov,
 				ft_tx_ctrl.iov_desc, ft_ctrl.iov_array[ft_tx_ctrl.iov_iter],
 				ft_tx_ctrl.addr, ft_tx_ctrl.tag, NULL);
@@ -174,7 +174,7 @@ static int ft_post_tsend(void)
 		break;
 	case FT_FUNC_SENDMSG:
 		ft_format_iov(ft_tx_ctrl.iov, ft_ctrl.iov_array[ft_tx_ctrl.iov_iter],
-				ft_tx_ctrl.buf, ft_tx_ctrl.msg_size);
+				tx_buf, tx_size);
 		msg.msg_iov = ft_tx_ctrl.iov;
 		msg.desc = ft_tx_ctrl.iov_desc;
 		msg.iov_count = ft_ctrl.iov_array[ft_tx_ctrl.iov_iter];
@@ -187,17 +187,17 @@ static int ft_post_tsend(void)
 		ft_tx_ctrl.credits--;
 		break;
 	case FT_FUNC_INJECT:
-		ft_send_retry(ret, fi_tinject, ep, ft_tx_ctrl.buf,
-				ft_tx_ctrl.msg_size, ft_tx_ctrl.addr, ft_tx_ctrl.tag);
+		ft_send_retry(ret, fi_tinject, ep, tx_buf,
+				tx_size, ft_tx_ctrl.addr, ft_tx_ctrl.tag);
 		break;
 	case FT_FUNC_INJECTDATA:
-		ft_send_retry(ret, fi_tinjectdata, ep, ft_tx_ctrl.buf,
-				ft_tx_ctrl.msg_size, ft_tx_ctrl.remote_cq_data,
+		ft_send_retry(ret, fi_tinjectdata, ep, tx_buf,
+				tx_size, ft_tx_ctrl.remote_cq_data,
 				ft_tx_ctrl.addr, ft_tx_ctrl.tag);
 		break;
 	default:
-		ft_send_retry(ret, fi_tsend, ep, ft_tx_ctrl.buf,
-				ft_tx_ctrl.msg_size, ft_tx_ctrl.memdesc,
+		ft_send_retry(ret, fi_tsend, ep, tx_buf,
+				tx_size, ft_tx_ctrl.memdesc,
 				ft_tx_ctrl.addr, ft_tx_ctrl.tag, NULL);
 		ft_tx_ctrl.credits--;
 		break;
@@ -286,7 +286,7 @@ int ft_send_dgram(void)
 {
 	int ret;
 
-	*(uint8_t*) ft_tx_ctrl.buf = ft_tx_ctrl.seqno++;
+	*(uint8_t*) tx_buf = ft_tx_ctrl.seqno++;
 	ret = ft_send_msg();
 	return ret;
 }
@@ -296,7 +296,7 @@ int ft_send_dgram_flood(void)
 	int i, ret = 0;
 
 	ft_tx_ctrl.seqno = 0;
-	*(uint8_t*) ft_tx_ctrl.buf = 0;
+	*(uint8_t*) tx_buf = 0;
 	for (i = 0; i < ft_ctrl.xfer_iter - 1; i++) {
 		ret = ft_send_msg();
 		if (ret)
@@ -321,7 +321,7 @@ int ft_recv_dgram(void)
 
 		ret = ft_comp_rx(FT_DGRAM_POLL_TO);
 		if ((credits != ft_rx_ctrl.credits) &&
-		    (*(uint8_t *) ft_rx_ctrl.buf == ft_rx_ctrl.seqno)) {
+		    (*(uint8_t *) rx_buf == ft_rx_ctrl.seqno)) {
 			ft_rx_ctrl.seqno++;
 			return 0;
 		}
@@ -343,7 +343,7 @@ int ft_recv_dgram_flood(size_t *recv_cnt)
 		ret = ft_comp_rx(0);
 		cnt += ft_rx_ctrl.credits;
 
-	} while (!ret && ((*(uint8_t *) ft_rx_ctrl.buf != (uint8_t) ~0) || !cnt));
+	} while (!ret && ((*(uint8_t *) rx_buf != (uint8_t) ~0) || !cnt));
 
 	*recv_cnt = cnt;
 	return ret;

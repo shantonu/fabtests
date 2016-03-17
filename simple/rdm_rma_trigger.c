@@ -56,14 +56,14 @@ static int rma_write(void *src, size_t size,
 	struct fi_msg_rma msg;
 	struct iovec msg_iov;
 	struct fi_rma_iov rma_iov;
-	void *desc = fi_mr_desc(mr);
+	void *desc = fi_mr_desc(rx_mr);
 
 	msg_iov.iov_base = src;
 	msg_iov.iov_len = size;
 
 	rma_iov.addr = 0;
 	rma_iov.len = size;
-	rma_iov.key = FT_MR_KEY;
+	rma_iov.key = rx_mr_key;
 
 	msg.msg_iov = &msg_iov;
 	msg.desc = &desc;
@@ -75,7 +75,7 @@ static int rma_write(void *src, size_t size,
 
 	ret = fi_writemsg(ep, &msg, flags);
  	if (ret){
- 		FT_PRINTERR("fi_write", ret);
+ 		FT_PRINTERR("fi_writemsg", ret);
  		return ret;
 	}
 	return 0;

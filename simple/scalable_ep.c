@@ -98,7 +98,7 @@ static int alloc_ep_res(struct fid_ep *sep)
 	rx_ep = calloc(ctx_cnt, sizeof *rx_ep);
 	remote_rx_addr = calloc(ctx_cnt, sizeof *remote_rx_addr);
 
-	if (!buf || !txcq_array || !rxcq_array || !tx_ep || !rx_ep || !remote_rx_addr) {
+	if (!rx_buf  || !tx_buf || !txcq_array || !rxcq_array || !tx_ep || !rx_ep || !remote_rx_addr) {
 		perror("malloc");
 		return -1;
 	}
@@ -170,7 +170,7 @@ static int bind_ep_res(void)
 		}
 
 		ret = fi_recv(rx_ep[i], rx_buf, MAX(rx_size, FT_MAX_CTRL_MSG),
-				fi_mr_desc(mr), 0, NULL);
+				fi_mr_desc(rx_mr), 0, NULL);
 		if (ret) {
 			FT_PRINTERR("fi_recv", ret);
 			return ret;
@@ -204,7 +204,7 @@ static int run_test()
 	if (opts.dst_addr) {
 		for (i = 0; i < ctx_cnt && !ret; i++) {
 			fprintf(stdout, "Posting send for ctx: %d\n", i);
-			ret = fi_send(tx_ep[i], buf, tx_size, fi_mr_desc(mr),
+			ret = fi_send(tx_ep[i], tx_buf, tx_size, fi_mr_desc(tx_mr),
 					remote_rx_addr[i], NULL);
 			if (ret) {
 				FT_PRINTERR("fi_send", ret);
@@ -286,7 +286,7 @@ static int init_av(void)
 		}
 
 		ret = fi_send(tx_ep[0], tx_buf, addrlen,
-				fi_mr_desc(mr), remote_fi_addr, NULL);
+				fi_mr_desc(tx_mr), remote_fi_addr, NULL);
 		if (ret) {
 			FT_PRINTERR("fi_send", ret);
 			return ret;
@@ -305,7 +305,7 @@ static int init_av(void)
 			return ret;
 
 		ret = fi_send(tx_ep[0], tx_buf, 1,
-				fi_mr_desc(mr), remote_fi_addr, NULL);
+				fi_mr_desc(tx_mr), remote_fi_addr, NULL);
 		if (ret) {
 			FT_PRINTERR("fi_send", ret);
 			return ret;
@@ -315,7 +315,7 @@ static int init_av(void)
 	for (i = 0; i < ctx_cnt; i++)
 		remote_rx_addr[i] = fi_rx_addr(remote_fi_addr, i, rx_ctx_bits);
 
-	ret = fi_recv(rx_ep[0], rx_buf, rx_size, fi_mr_desc(mr), 0, NULL);
+	ret = fi_recv(rx_ep[0], rx_buf, rx_size, fi_mr_desc(rx_mr), 0, NULL);
 	if (ret) {
 		FT_PRINTERR("fi_recv", ret);
 		return ret;

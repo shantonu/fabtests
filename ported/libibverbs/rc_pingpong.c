@@ -117,7 +117,7 @@ static int pp_eq_create(struct pingpong_context *ctx)
 	int rc;
 
 	memset(&cm_attr, 0, sizeof cm_attr);
-	cm_attr.wait_obj 	= FI_WAIT_FD;				
+	cm_attr.wait_obj 	= FI_WAIT_FD;
 
 	rc = fi_eq_open(ctx->fabric, &cm_attr, &ctx->eq, NULL);
 	if (rc)
@@ -134,7 +134,7 @@ static int pp_cq_create(struct pingpong_context *ctx)
 	memset(&cq_attr, 0, sizeof cq_attr);
 	cq_attr.format 		= FI_CQ_FORMAT_CONTEXT;
 	if (ctx->use_event)
-		cq_attr.wait_obj = FI_WAIT_FD;				
+		cq_attr.wait_obj = FI_WAIT_FD;
 	else
 		cq_attr.wait_obj = FI_WAIT_UNSPEC;
 	cq_attr.size 		= ctx->rx_depth + 1;
@@ -206,7 +206,7 @@ static int pp_accept_ctx(struct pingpong_context *ctx)
 	}
 
 
-	rc = fi_mr_reg(ctx->dom, ctx->buf, ctx->size, FI_SEND | FI_RECV, 0, 0, 0, &ctx->mr, NULL);
+	rc = fi_mr_reg(ctx->dom, ctx->buf, ctx->size, FI_SEND | FI_RECV, 0, get_mr_key(ctx->info->domain_attr), 0, &ctx->mr, NULL);
 	if (rc) {
 		FT_PRINTERR("fi_mr_reg", rc);
 		return 1;
@@ -288,8 +288,8 @@ static int pp_connect_ctx(struct pingpong_context *ctx)
 		fprintf(stderr, "Unable to create event queue\n");
 		return 1;
 	}
-	
-	rc = fi_mr_reg(ctx->dom, ctx->buf, ctx->size, FI_SEND | FI_RECV, 0, 0, 0, &ctx->mr, NULL);
+
+	rc = fi_mr_reg(ctx->dom, ctx->buf, ctx->size, FI_SEND | FI_RECV, 0, get_mr_key(ctx->info->domain_attr), 0, &ctx->mr, NULL);
 	if (rc) {
 		FT_PRINTERR("fi_mr_reg", rc);
 		return 1;
@@ -301,19 +301,19 @@ static int pp_connect_ctx(struct pingpong_context *ctx)
 		FT_PRINTERR("fi_endpoint", rc);
 		return 1;
 	}
-	
+
 	/* Create event queue */
 	if (pp_cq_create(ctx)) {
 		fprintf(stderr, "Unable to create event queue\n");
 		return 1;
 	}
-	
+
 	/* Bind eq to ep */
 	rc = fi_ep_bind(ctx->ep, &ctx->cq->fid, FI_SEND | FI_RECV);
 	if (rc) {
 		FT_PRINTERR("fi_ep_bind", rc);
 		return 1;
-	}	
+	}
 
 	rc = fi_ep_bind(ctx->ep, &ctx->eq->fid, 0);
 	if (rc) {
@@ -397,11 +397,11 @@ err1:
 
 int pp_close_ctx(struct pingpong_context *ctx)
 {
+	FT_CLOSE(ctx->mr, "Couldn't destroy MR\n");
 	FT_CLOSE(ctx->lep, "Couldn't destroy listener EP\n");
 	FT_CLOSE(ctx->ep, "Couldn't destroy EP\n");
 	FT_CLOSE(ctx->eq, "Couldn't destroy EQ\n");
 	FT_CLOSE(ctx->cq, "Couldn't destroy CQ\n");
-	FT_CLOSE(ctx->mr, "Couldn't destroy MR\n");
 	FT_CLOSE(ctx->dom, "Couldn't deallocate Domain\n");
 	FT_CLOSE(ctx->fabric, "Couldn't close fabric\n");
 
@@ -415,7 +415,7 @@ static int pp_post_send(struct pingpong_context *ctx)
 {
 	int rc = 0;
 
-	rc = fi_send(ctx->ep, ctx->buf, ctx->size, fi_mr_desc(ctx->mr), 
+	rc = fi_send(ctx->ep, ctx->buf, ctx->size, fi_mr_desc(ctx->mr),
 		     0, (void *)(uintptr_t)PINGPONG_SEND_WCID);
 	if (rc) {
 		FT_PRINTERR("fi_send", rc);

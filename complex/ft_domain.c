@@ -176,28 +176,29 @@ static int ft_open_av(void)
 	return ret;
 }
 
-static int ft_setup_xcontrol_bufs(struct ft_xcontrol *ctrl)
+static int ft_setup_xcontrol_bufs(struct ft_xcontrol *ctrl, struct fid_mr *mr, void **buf, uint64_t *key)
 {
 	size_t size;
 	int i, ret;
 
 	size = ft_ctrl.size_array[ft_ctrl.size_cnt - 1];
-	if (!ctrl->buf) {
-		ctrl->buf = calloc(1, size);
-		if (!ctrl->buf)
+	if (!*buf) {
+		*buf = calloc(1, size);
+		if (!*buf)
 			return -FI_ENOMEM;
 	} else {
-		memset(ctrl->buf, 0, size);
+		memset(*buf, 0, size);
 	}
 
-	if ((fabric_info->mode & FI_LOCAL_MR) && !ctrl->mr) {
-		ret = fi_mr_reg(domain, ctrl->buf, size, FI_RECV | FI_SEND,
-				0, 0, 0, &ctrl->mr, NULL);
+	if ((fabric_info->mode & FI_LOCAL_MR) && !mr) {
+		*key = get_mr_key(fabric_info->domain_attr);
+		ret = fi_mr_reg(domain, *buf, size, FI_RECV | FI_SEND,
+				0, *key, 0, &mr, NULL);
 		if (ret) {
 			FT_PRINTERR("fi_mr_reg", ret);
 			return ret;
 		}
-		ctrl->memdesc = fi_mr_desc(ctrl->mr);
+		ctrl->memdesc = fi_mr_desc(mr);
 	}
 
 	for (i = 0; i < ft_ctrl.iov_cnt; i++)
@@ -210,11 +211,13 @@ static int ft_setup_bufs(void)
 {
 	int ret;
 
-	ret = ft_setup_xcontrol_bufs(&ft_rx_ctrl);
+	/* Set that flag to indicate that mr registration is done by the app not the common code */
+	ft_skip_mr = 1;
+	ret = ft_setup_xcontrol_bufs(&ft_rx_ctrl, rx_mr, &rx_buf, &rx_mr_key);
 	if (ret)
 		return ret;
 
-	ret = ft_setup_xcontrol_bufs(&ft_tx_ctrl);
+	ret = ft_setup_xcontrol_bufs(&ft_tx_ctrl, tx_mr, &tx_buf, &tx_mr_key);
 	if (ret)
 		return ret;
 

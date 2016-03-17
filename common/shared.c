@@ -55,7 +55,8 @@ struct fid_pep *pep;
 struct fid_ep *ep;
 struct fid_cq *txcq, *rxcq;
 struct fid_cntr *txcntr, *rxcntr;
-struct fid_mr *mr;
+struct fid_mr *tx_mr;
+struct fid_mr *rx_mr;
 struct fid_av *av;
 struct fid_eq *eq;
 
@@ -63,14 +64,15 @@ struct fid_mr no_mr;
 struct fi_context tx_ctx, rx_ctx;
 
 uint64_t tx_seq, rx_seq, tx_cq_cntr, rx_cq_cntr;
+uint64_t tx_mr_key, rx_mr_key;
 int ft_skip_mr = 0;
 int ft_parent_proc = 0;
 pid_t ft_child_pid = 0;
 int ft_socket_pair[2];
 
 fi_addr_t remote_fi_addr = FI_ADDR_UNSPEC;
-void *buf, *tx_buf, *rx_buf;
-size_t buf_size, tx_size, rx_size;
+void *tx_buf, *rx_buf;
+size_t tx_size, rx_size;
 int rx_fd = -1, tx_fd = -1;
 char default_port[8] = "9228";
 
@@ -126,7 +128,6 @@ const unsigned int test_cnt = (sizeof test_size / sizeof test_size[0]);
 #define INTEG_SEED 7
 static const char integ_alphabet[] = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
 static const int integ_alphabet_length = (sizeof(integ_alphabet)/sizeof(*integ_alphabet)) - 1;
-
 
 static int ft_poll_fd(int fd, int timeout)
 {
@@ -233,58 +234,67 @@ static uint64_t ft_caps_to_mr_access(uint64_t caps)
  * buffer is large enough for a control message used to exchange addressing
  * data.
  */
-int ft_alloc_msgs(void)
+static int ft_alloc_msg(struct fid_mr **mr, void **buf, size_t *size, uint64_t *key)
 {
 	int ret;
 	long alignment = 1;
 
+	if (opts.options & FT_OPT_ALIGN) {
+		alignment = sysconf(_SC_PAGESIZE);
+		if (alignment < 0)
+			return -errno;
+		*size += alignment;
+
+		ret = posix_memalign(buf, (size_t) alignment, *size);
+		if (ret) {
+			FT_PRINTERR("posix_memalign", ret);
+			return ret;
+		}
+	} else {
+		*buf = calloc(1, *size);
+		if (!*buf) {
+			perror("calloc");
+			return -FI_ENOMEM;
+		}
+	}
+
+	if (!ft_skip_mr && ((fi->mode & FI_LOCAL_MR) ||
+				(fi->caps & (FI_RMA | FI_ATOMIC)))) {
+		*key = get_mr_key(fi->domain_attr);
+		ret = fi_mr_reg(domain, *buf, *size, ft_caps_to_mr_access(fi->caps),
+				0, *key, 0, mr, NULL);
+		if (ret) {
+			FT_PRINTERR("fi_mr_reg", ret);
+			return ret;
+		}
+	} else {
+		*mr = &no_mr;
+	}
+
+	return 0;
+}
+
+static int ft_alloc_msgs(void)
+{
+	int ret;
 	/* TODO: support multi-recv tests */
-	if (fi->rx_attr->op_flags == FI_MULTI_RECV)
+	if (fi->rx_attr && fi->rx_attr->op_flags == FI_MULTI_RECV)
 		return 0;
 
 	tx_size = opts.options & FT_OPT_SIZE ?
 		  opts.transfer_size : test_size[TEST_CNT - 1].size;
 	if (tx_size > fi->ep_attr->max_msg_size)
 		tx_size = fi->ep_attr->max_msg_size;
-	rx_size = tx_size + ft_rx_prefix_size();
-	tx_size += ft_tx_prefix_size();
-	buf_size = MAX(tx_size, FT_MAX_CTRL_MSG) + MAX(rx_size, FT_MAX_CTRL_MSG);
+	rx_size = MAX(tx_size + ft_rx_prefix_size(), FT_MAX_CTRL_MSG);
+	tx_size = MAX(tx_size + ft_tx_prefix_size(), FT_MAX_CTRL_MSG);
 
-	if (opts.options & FT_OPT_ALIGN) {
-		alignment = sysconf(_SC_PAGESIZE);
-		if (alignment < 0)
-			return -errno;
-		buf_size += alignment;
+	ret = ft_alloc_msg(&tx_mr, &tx_buf, &tx_size, &tx_mr_key);
+	if (ret)
+		return ret;
 
-		ret = posix_memalign(&buf, (size_t) alignment, buf_size);
-		if (ret) {
-			FT_PRINTERR("posix_memalign", ret);
-			return ret;
-		}
-	} else {
-		buf = malloc(buf_size);
-		if (!buf) {
-			perror("malloc");
-			return -FI_ENOMEM;
-		}
-	}
-	memset(buf, 0, buf_size);
-	rx_buf = buf;
-	tx_buf = (char *) buf + MAX(rx_size, FT_MAX_CTRL_MSG);
-	tx_buf = (void *) (((uintptr_t) tx_buf + alignment - 1) &
-			   ~(alignment - 1));
-
-	if (!ft_skip_mr && ((fi->mode & FI_LOCAL_MR) ||
-				(fi->caps & (FI_RMA | FI_ATOMIC)))) {
-		ret = fi_mr_reg(domain, buf, buf_size, ft_caps_to_mr_access(fi->caps),
-				0, FT_MR_KEY, 0, &mr, NULL);
-		if (ret) {
-			FT_PRINTERR("fi_mr_reg", ret);
-			return ret;
-		}
-	} else {
-		mr = &no_mr;
-	}
+	ret = ft_alloc_msg(&rx_mr, &rx_buf, &rx_size, &rx_mr_key);
+	if (ret)
+		return ret;
 
 	return 0;
 }
@@ -569,7 +579,7 @@ int ft_exchange_keys(struct fi_rma_iov *peer_iov)
 		rma_iov = tx_buf + ft_tx_prefix_size();
 		rma_iov->addr = fi->domain_attr->mr_mode == FI_MR_SCALABLE ?
 				0 : (uintptr_t) rx_buf + ft_rx_prefix_size();
-		rma_iov->key = fi_mr_key(mr);
+		rma_iov->key = fi_mr_key(rx_mr);
 		ret = ft_tx(sizeof *rma_iov);
 		if (ret)
 			return ret;
@@ -595,7 +605,7 @@ int ft_exchange_keys(struct fi_rma_iov *peer_iov)
 		rma_iov = tx_buf + ft_tx_prefix_size();
 		rma_iov->addr = fi->domain_attr->mr_mode == FI_MR_SCALABLE ?
 				0 : (uintptr_t) rx_buf + ft_rx_prefix_size();
-		rma_iov->key = fi_mr_key(mr);
+		rma_iov->key = fi_mr_key(rx_mr);
 		ret = ft_tx(sizeof *rma_iov);
 	}
 
@@ -604,8 +614,10 @@ int ft_exchange_keys(struct fi_rma_iov *peer_iov)
 
 static void ft_close_fids(void)
 {
-	if (mr != &no_mr)
-		FT_CLOSE_FID(mr);
+	if (rx_mr != &no_mr)
+		FT_CLOSE_FID(rx_mr);
+	if (tx_mr != &no_mr)
+		FT_CLOSE_FID(tx_mr);
 	FT_CLOSE_FID(ep);
 	FT_CLOSE_FID(pep);
 	FT_CLOSE_FID(pollset);
@@ -623,10 +635,15 @@ static void ft_close_fids(void)
 void ft_free_res(void)
 {
 	ft_close_fids();
-	if (buf) {
-		free(buf);
-		buf = rx_buf = tx_buf = NULL;
-		buf_size = rx_size = tx_size = 0;
+	if (rx_buf) {
+		free(rx_buf);
+		rx_buf = NULL;
+		rx_size = 0;
+	}
+	if (tx_buf) {
+		free(tx_buf);
+		tx_buf = NULL;
+		tx_size = 0;
 	}
 	if (fi_pep) {
 		fi_freeinfo(fi_pep);
@@ -795,10 +812,10 @@ ssize_t ft_post_tx(size_t size)
 
 	if (hints->caps & FI_TAGGED) {
 		ret = fi_tsend(ep, tx_buf, size + ft_tx_prefix_size(),
-				fi_mr_desc(mr), remote_fi_addr, tx_seq, &tx_ctx);
+				fi_mr_desc(tx_mr), remote_fi_addr, tx_seq, &tx_ctx);
 	} else {
 		ret = fi_send(ep, tx_buf, size + ft_tx_prefix_size(),
-				fi_mr_desc(mr), remote_fi_addr, &tx_ctx);
+				fi_mr_desc(tx_mr), remote_fi_addr, &tx_ctx);
 	}
 	if (ret) {
 		FT_PRINTERR("transmit", ret);
@@ -864,10 +881,10 @@ ssize_t ft_post_rx(size_t size)
 	ssize_t ret;
 
 	if (hints->caps & FI_TAGGED) {
-		ret = fi_trecv(ep, rx_buf, size + ft_rx_prefix_size(), fi_mr_desc(mr),
+		ret = fi_trecv(ep, rx_buf, size + ft_rx_prefix_size(), fi_mr_desc(rx_mr),
 				0, rx_seq, 0, &rx_ctx);
 	} else {
-		ret = fi_recv(ep, rx_buf, size + ft_rx_prefix_size(), fi_mr_desc(mr),
+		ret = fi_recv(ep, rx_buf, size + ft_rx_prefix_size(), fi_mr_desc(rx_mr),
 				0, &rx_ctx);
 	}
 	if (ret) {

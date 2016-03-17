@@ -134,7 +134,7 @@ static int run(void)
 		}
 
 		printf("Receiving msg\n");
-		ret = fi_trecv(ep, buf, rx_size, fi_mr_desc(mr), remote_fi_addr,
+		ret = fi_trecv(ep, rx_buf, rx_size, fi_mr_desc(rx_mr), remote_fi_addr,
 				0x900d, 0, &rx_ctx);
 		if (ret) {
 			FT_PRINTERR("fi_trecv", ret);
@@ -148,7 +148,7 @@ static int run(void)
 
 	} else {
 		printf("Sending tagged message\n");
-		ret = fi_tsend(ep, tx_buf, tx_size, fi_mr_desc(mr),
+		ret = fi_tsend(ep, tx_buf, tx_size, fi_mr_desc(tx_mr),
 				remote_fi_addr, 0x900d, &tx_ctx);
 		if (ret)
 			return ret;

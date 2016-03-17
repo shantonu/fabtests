@@ -34,7 +34,6 @@
 
 #include "fabtest.h"
 
-
 void ft_record_error(int error)
 {
 	if (!ft_ctrl.error) {
@@ -71,11 +70,11 @@ static int ft_init_rx_control(void)
 	ft_rx_ctrl.cq_format = FI_CQ_FORMAT_MSG;
 	ft_rx_ctrl.addr = FI_ADDR_UNSPEC;
 
-	ft_rx_ctrl.msg_size = med_size_array[med_size_cnt - 1];
+	rx_size = med_size_array[med_size_cnt - 1];
 	if (fabric_info && fabric_info->ep_attr &&
 	    fabric_info->ep_attr->max_msg_size &&
-	    fabric_info->ep_attr->max_msg_size < ft_rx_ctrl.msg_size)
-		ft_rx_ctrl.msg_size = fabric_info->ep_attr->max_msg_size;
+	    fabric_info->ep_attr->max_msg_size < rx_size)
+		rx_size = fabric_info->ep_attr->max_msg_size;
 
 	return 0;
 }
@@ -120,7 +119,6 @@ static int ft_init_control(void)
 
 static void ft_cleanup_xcontrol(struct ft_xcontrol *ctrl)
 {
-	free(ctrl->buf);
 	free(ctrl->iov);
 	free(ctrl->iov_desc);
 	memset(ctrl, 0, sizeof *ctrl);
@@ -342,17 +340,17 @@ static int ft_run_latency(void)
 	int ret, i;
 
 	for (i = 0; i < ft_ctrl.size_cnt; i += ft_ctrl.inc_step) {
-		ft_tx_ctrl.msg_size = ft_ctrl.size_array[i];
-		if (ft_tx_ctrl.msg_size > fabric_info->ep_attr->max_msg_size)
+		tx_size = ft_ctrl.size_array[i];
+		if (tx_size > fabric_info->ep_attr->max_msg_size)
 			break;
 
 		if (((test_info.class_function == FT_FUNC_INJECT) ||
 			(test_info.class_function == FT_FUNC_INJECTDATA)) &&
-			(ft_tx_ctrl.msg_size > fabric_info->tx_attr->inject_size))
+			(tx_size > fabric_info->tx_attr->inject_size))
 			break;
 
 		ft_ctrl.xfer_iter = test_info.test_flags & FT_FLAG_QUICKTEST ?
-				5 : size_to_count(ft_tx_ctrl.msg_size);
+				5 : size_to_count(tx_size);
 
 		ret = ft_sync_test(0);
 		if (ret)
@@ -371,7 +369,7 @@ static int ft_run_latency(void)
 			return ret;
 		}
 
-		show_perf("lat", ft_tx_ctrl.msg_size, ft_ctrl.xfer_iter, &start, &end, 2);
+		show_perf("lat", tx_size, ft_ctrl.xfer_iter, &start, &end, 2);
 	}
 
 	return 0;
@@ -466,17 +464,17 @@ static int ft_run_bandwidth(void)
 	int ret, i;
 
 	for (i = 0; i < ft_ctrl.size_cnt; i += ft_ctrl.inc_step) {
-		ft_tx_ctrl.msg_size = ft_ctrl.size_array[i];
-		if (ft_tx_ctrl.msg_size > fabric_info->ep_attr->max_msg_size)
+		tx_size = ft_ctrl.size_array[i];
+		if (tx_size > fabric_info->ep_attr->max_msg_size)
 			break;
 
 		if (((test_info.class_function == FT_FUNC_INJECT) ||
 			(test_info.class_function == FT_FUNC_INJECTDATA)) &&
-			(ft_tx_ctrl.msg_size > fabric_info->tx_attr->inject_size))
+			(tx_size > fabric_info->tx_attr->inject_size))
 			break;
 
 		ft_ctrl.xfer_iter = test_info.test_flags & FT_FLAG_QUICKTEST ?
-				5 : size_to_count(ft_tx_ctrl.msg_size);
+				5 : size_to_count(tx_size);
 		recv_cnt = ft_ctrl.xfer_iter;
 
 		ret = ft_sync_test(0);
@@ -496,7 +494,7 @@ static int ft_run_bandwidth(void)
 			return ret;
 		}
 
-		show_perf("bw", ft_tx_ctrl.msg_size, recv_cnt, &start, &end, 1);
+		show_perf("bw", tx_size, recv_cnt, &start, &end, 1);
 	}
 
 	return 0;
@@ -504,12 +502,12 @@ static int ft_run_bandwidth(void)
 
 static void ft_cleanup(void)
 {
-	FT_CLOSE_FID(ft_rx_ctrl.mr);
-	FT_CLOSE_FID(ft_tx_ctrl.mr);
-	ft_free_res();
 	ft_cleanup_xcontrol(&ft_rx_ctrl);
 	ft_cleanup_xcontrol(&ft_tx_ctrl);
 	memset(&ft_ctrl, 0, sizeof ft_ctrl);
+	FT_CLOSE_FID(rx_mr);
+	FT_CLOSE_FID(tx_mr);
+	ft_free_res();
 }
 
 int ft_run_test()

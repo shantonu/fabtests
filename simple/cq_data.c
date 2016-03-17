@@ -166,8 +166,8 @@ static int run_test()
 		fprintf(stdout,
 			"Posting send with CQ data: 0x%" PRIx64 "\n",
 			remote_cq_data);
-		ret = fi_senddata(ep, buf, size, fi_mr_desc(mr), remote_cq_data,
-				0, buf);
+		ret = fi_senddata(ep, tx_buf, size, fi_mr_desc(tx_mr), remote_cq_data,
+				0, tx_buf);
 		if (ret) {
 			FT_PRINTERR("fi_send", ret);
 			return ret;

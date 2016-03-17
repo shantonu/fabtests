@@ -130,15 +130,16 @@ extern struct fid_pep *pep;
 extern struct fid_ep *ep;
 extern struct fid_cq *txcq, *rxcq;
 extern struct fid_cntr *txcntr, *rxcntr;
-extern struct fid_mr *mr, no_mr;
+extern struct fid_mr *tx_mr, *rx_mr, no_mr;
 extern struct fid_av *av;
 extern struct fid_eq *eq;
 
 extern fi_addr_t remote_fi_addr;
-extern void *buf, *tx_buf, *rx_buf;
-extern size_t buf_size, tx_size, rx_size;
+extern void *tx_buf, *rx_buf;
+extern size_t tx_size, rx_size;
 extern int tx_fd, rx_fd;
 extern int timeout;
+extern uint64_t tx_mr_key, rx_mr_key;
 
 extern struct fi_context tx_ctx, rx_ctx;
 
@@ -191,7 +192,7 @@ int ft_read_addr_opts(char **node, char **service, struct fi_info *hints,
 char *size_str(char str[FT_STR_LEN], long long size);
 char *cnt_str(char str[FT_STR_LEN], long long cnt);
 int size_to_count(int size);
-
+static uint64_t user_key = FT_MR_KEY;
 
 #define FT_PRINTERR(call, retv) \
 	do { fprintf(stderr, call "(): %s:%d, ret=%d (%s)\n", __FILE__, __LINE__, \
@@ -243,8 +244,14 @@ int ft_av_insert(struct fid_av *av, void *addr, size_t count, fi_addr_t *fi_addr
 		uint64_t flags, void *context);
 int ft_init_av();
 int ft_exchange_keys(struct fi_rma_iov *peer_iov);
+static uint64_t get_mr_key();
 void ft_free_res();
 void init_test(struct ft_opts *opts, char *test_name, size_t test_name_len);
+
+static inline uint64_t get_mr_key(struct fi_domain_attr *dom_attr)
+{
+        return dom_attr->mr_mode == FI_MR_SCALABLE ? user_key++ : 0;
+}
 
 static inline void ft_start(void)
 {
@@ -256,6 +263,7 @@ static inline void ft_stop(void)
 	clock_gettime(CLOCK_MONOTONIC, &end);
 	opts.options &= ~FT_OPT_ACTIVE;
 }
+
 int ft_sync();
 int ft_sync_pair(int status);
 int ft_fork_and_pair();

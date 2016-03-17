@@ -156,6 +156,7 @@ out:
 
 static void free_res(void)
 {
+	FT_CLOSE_FID(tx_mr);
 	FT_CLOSE_FID(mr_multi_recv);
 	if (tx_buf) {
 		free(tx_buf);
@@ -185,7 +186,7 @@ static int alloc_ep_res(struct fi_info *fi)
 	}
 
 	ret = fi_mr_reg(domain, tx_buf, tx_size, FI_SEND,
-			0, FT_MR_KEY, 0, &mr, NULL);
+			0, get_mr_key(fi->domain_attr), 0, &tx_mr, NULL);
 	if (ret) {
 		FT_PRINTERR("fi_mr_reg", ret);
 		return ret;
@@ -199,8 +200,8 @@ static int alloc_ep_res(struct fi_info *fi)
 		return -1;
 	}
 
-	ret = fi_mr_reg(domain, rx_buf, rx_size, FI_RECV, 0, FT_MR_KEY + 1, 0,
-			&mr_multi_recv, NULL);
+	ret = fi_mr_reg(domain, rx_buf, rx_size, FI_RECV, 0,
+			get_mr_key(fi->domain_attr), 0, &mr_multi_recv, NULL);
 	if (ret) {
 		FT_PRINTERR("fi_mr_reg", ret);
 		return ret;

@@ -57,19 +57,25 @@ int fabtests_debug = 0;
 
 static char err_buf[512];
 
-
 static void teardown_ep_fixture(void)
 {
-	if (mr != &no_mr)
-		FT_CLOSE_FID(mr);
+	if (tx_mr != &no_mr)
+		FT_CLOSE_FID(tx_mr);
+	if (rx_mr != &no_mr)
+		FT_CLOSE_FID(rx_mr);
 	FT_CLOSE_FID(ep);
 	FT_CLOSE_FID(txcq);
 	FT_CLOSE_FID(rxcq);
 	FT_CLOSE_FID(av);
-	if (buf) {
-		free(buf);
-		buf = rx_buf = tx_buf = NULL;
-		buf_size = rx_size = tx_size = 0;
+	if (rx_buf) {
+		free(rx_buf);
+		rx_buf = NULL;
+		rx_size = 0;
+	}
+	if (tx_buf) {
+		free(tx_buf);
+		tx_buf = NULL;
+		tx_size = 0;
 	}
 }
 
