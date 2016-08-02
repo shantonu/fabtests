@@ -3,6 +3,7 @@ AM_CFLAGS = -g -Wall -D_GNU_SOURCE -D 'CONFIG_PATH="${configdir}"' -I$(srcdir)/i
 ACLOCAL_AMFLAGS = -I config
 
 bin_PROGRAMS = \
+	simple/fi_basic \
 	simple/fi_msg \
 	simple/fi_msg_sockets \
 	simple/fi_rdm \
@@ -69,6 +70,10 @@ if MACOS
 libfabtests_la_SOURCES += include/osx/osd.h
 libfabtests_la_SOURCES += common/osx/osd.c
 endif
+
+simple_fi_basic_SOURCES = \
+	simple/basic.c
+simple_fi_basic_LDADD = libfabtests.la
 
 simple_fi_msg_sockets_SOURCES = \
 	simple/msg_sockets.c
